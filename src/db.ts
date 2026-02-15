@@ -94,9 +94,36 @@ function migrateV1(database: Database.Database): void {
   `);
 }
 
+function migrateV2(database: Database.Database): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS diagnostics (
+      id TEXT PRIMARY KEY,
+      tool_name TEXT NOT NULL,
+      success INTEGER NOT NULL,
+      latency_ms REAL NOT NULL,
+      error_message TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS feedback (
+      id TEXT PRIMARY KEY,
+      type TEXT NOT NULL CHECK(type IN ('bug','feature_request','friction')),
+      message TEXT NOT NULL,
+      tool_name TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS metrics (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+}
+
 const migrations: Array<(database: Database.Database) => void> = [
   migrateV1,
-  // migrateV2 will be added in Phase 5
+  migrateV2,
 ];
 
 function migrate(database: Database.Database): void {
@@ -335,6 +362,134 @@ export function getLatestHandoff(): Handoff | null {
   const row = database.prepare("SELECT * FROM handoffs ORDER BY created_at DESC LIMIT 1").get() as Record<string, unknown> | undefined;
   if (!row) return null;
   return rowToHandoff(row);
+}
+
+// --- Diagnostics ---
+
+export function insertDiagnostic(
+  toolName: string,
+  success: boolean,
+  latencyMs: number,
+  errorMessage: string | null
+): void {
+  const database = getDb();
+  database.prepare(`
+    INSERT INTO diagnostics (id, tool_name, success, latency_ms, error_message, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(
+    crypto.randomUUID(),
+    toolName,
+    success ? 1 : 0,
+    latencyMs,
+    errorMessage,
+    new Date().toISOString(),
+  );
+}
+
+export function getDiagnosticsSummary(): Array<{
+  tool_name: string;
+  calls: number;
+  errors: number;
+  avg_latency_ms: number;
+}> {
+  const database = getDb();
+  return database.prepare(`
+    SELECT
+      tool_name,
+      COUNT(*) as calls,
+      SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as errors,
+      AVG(latency_ms) as avg_latency_ms
+    FROM diagnostics
+    GROUP BY tool_name
+    ORDER BY calls DESC
+  `).all() as Array<{ tool_name: string; calls: number; errors: number; avg_latency_ms: number }>;
+}
+
+export function getRecentDiagnostics(limit: number = 20): Array<{
+  id: string;
+  tool_name: string;
+  success: number;
+  latency_ms: number;
+  error_message: string | null;
+  created_at: string;
+}> {
+  const database = getDb();
+  return database.prepare(
+    "SELECT * FROM diagnostics ORDER BY created_at DESC LIMIT ?"
+  ).all(limit) as Array<{
+    id: string;
+    tool_name: string;
+    success: number;
+    latency_ms: number;
+    error_message: string | null;
+    created_at: string;
+  }>;
+}
+
+export function getHealthScoreFromDb(): number {
+  const database = getDb();
+  const rows = database.prepare(
+    "SELECT success FROM diagnostics ORDER BY created_at DESC LIMIT 100"
+  ).all() as Array<{ success: number }>;
+
+  if (rows.length === 0) return 1.0;
+
+  const successes = rows.filter((r) => r.success === 1).length;
+  return successes / rows.length;
+}
+
+// --- Feedback ---
+
+export function insertFeedback(
+  type: "bug" | "feature_request" | "friction",
+  message: string,
+  toolName: string | null = null
+): void {
+  const database = getDb();
+  database.prepare(`
+    INSERT INTO feedback (id, type, message, tool_name, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(
+    crypto.randomUUID(),
+    type,
+    message,
+    toolName,
+    new Date().toISOString(),
+  );
+}
+
+export function getRecentFeedback(limit: number = 10): Array<{
+  id: string;
+  type: string;
+  message: string;
+  tool_name: string | null;
+  created_at: string;
+}> {
+  const database = getDb();
+  return database.prepare(
+    "SELECT * FROM feedback ORDER BY created_at DESC LIMIT ?"
+  ).all(limit) as Array<{
+    id: string;
+    type: string;
+    message: string;
+    tool_name: string | null;
+    created_at: string;
+  }>;
+}
+
+// --- Metrics key/value ---
+
+export function getMetric(key: string): string | null {
+  const database = getDb();
+  const row = database.prepare("SELECT value FROM metrics WHERE key = ?").get(key) as { value: string } | undefined;
+  return row ? row.value : null;
+}
+
+export function setMetric(key: string, value: string): void {
+  const database = getDb();
+  database.prepare(
+    "INSERT OR REPLACE INTO metrics (key, value, updated_at) VALUES (?, ?, ?)"
+  ).run(key, value, new Date().toISOString());
 }
 
 export function initProjectVault(): string {
