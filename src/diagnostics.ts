@@ -7,7 +7,7 @@ import {
 } from "./db.js";
 
 interface ToolResult {
-  content: Array<{ type: string; text: string }>;
+  content: Array<{ type: "text"; text: string }>;
 }
 
 export async function withDiagnostics(
@@ -23,7 +23,7 @@ export async function withDiagnostics(
     const msg = err instanceof Error ? err.message : String(err);
     insertDiagnostic(toolName, false, performance.now() - start, msg);
     return {
-      content: [{ type: "text", text: JSON.stringify({ success: false, message: msg }) }],
+      content: [{ type: "text" as const, text: JSON.stringify({ success: false, message: msg }) }],
     };
   }
 }
