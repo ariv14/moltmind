@@ -26,6 +26,11 @@
     "embeddings",
     "sqlite"
   ],
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",

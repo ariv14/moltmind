@@ -1,0 +1,11 @@
+src/
+tests/
+.github/
+.moltmind/
+CLAUDE.md
+plan.md
+tsconfig.json
+*.db
+*.db-wal
+*.db-shm
+.DS_Store
