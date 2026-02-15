@@ -6,247 +6,354 @@
 
 ---
 
-## Phase 0: Environment Setup
+## Phase 0: Environment Setup ✅
+
 **Goal:** Mac machine ready, GitHub repo connected, Claude Code working.
 
-- [ ] **0.1** Install prerequisites
-  - Node.js 18+ (`brew install node` or use nvm)
-  - npm 9+ (comes with Node)
-  - Git (`brew install git`)
-  - Claude Code (`npm install -g @anthropic-ai/claude-code`)
-  - Verify: `node -v && npm -v && git --version && claude --version`
+- [x] **0.1** Install prerequisites (Node.js 18+, npm, Git, Claude Code)
+- [x] **0.2** GitHub repo live at github.com/ariv14/moltmind
+- [x] **0.3** Initialize Claude Code in the project
+- [x] **0.4** npm account ready
 
-- [ ] **0.2** GitHub repo is live at github.com/ariv14/moltmind ✅
-
-- [ ] **0.3** Initialize Claude Code in the project
-  - Run `claude` inside the moltmind directory
-  - Verify CLAUDE.md is loaded: ask Claude "what are the critical rules for this project?"
-
-- [ ] **0.4** Create npm account (if you don't have one)
-  - Go to npmjs.com → Sign Up
-  - Run `npm login` in terminal and authenticate
-  - Verify: `npm whoami`
-
-**Checkpoint:** `claude` runs in the project, CLAUDE.md is loaded, git remote is set, npm is authenticated.
+**Checkpoint:** ✅ Complete.
 
 ---
 
-## Phase 1: Project Scaffold
+## Phase 1: Project Scaffold ✅
+
 **Goal:** Empty but runnable MCP server that connects to Claude Code.
 
-- [ ] **1.1** Initialize package.json
-  - Tell Claude Code:
-```
-    Create package.json with:
-    name "moltmind", version "0.1.0", type "module",
-    bin entry pointing to dist/index.js,
-    scripts for build (tsc), dev (tsx watch), test, lint (tsc --noEmit), clean,
-    engines node >=18.
-    Then install dependencies:
-      @modelcontextprotocol/sdk better-sqlite3 @xenova/transformers
-    And dev dependencies:
-      typescript @types/better-sqlite3 @types/node tsx
-```
+- [x] **1.1** package.json with dependencies, bin entry, scripts, engines
+- [x] **1.2** tsconfig.json (ES2022, NodeNext, strict)
+- [x] **1.3** .gitignore (node_modules, dist, .moltmind, *.db)
+- [x] **1.4** src/index.ts — minimal MCP server with mm_status placeholder
+- [x] **1.5** Build and STDIO test pass
+- [x] **1.6** Connected to Claude Code as local MCP server
+- [x] **1.7** Git checkpoint: `feat: minimal MCP server scaffold with mm_status placeholder`
 
-- [ ] **1.2** Create tsconfig.json
-  - Tell Claude Code:
-```
-    Create tsconfig.json: target ES2022, module NodeNext,
-    moduleResolution NodeNext, outDir dist, rootDir src,
-    strict true, esModuleInterop true, skipLibCheck true,
-    declaration true, sourceMap true.
-    Include src/**/*.ts, exclude node_modules and dist.
-```
-
-- [ ] **1.3** Create .gitignore
-  - Tell Claude Code:
-```
-    Create .gitignore with: node_modules/, dist/, .moltmind/,
-    *.db, *.db-wal, *.db-shm, .DS_Store, .env, CLAUDE.local.md
-```
-
-- [ ] **1.4** Create minimal MCP server entry point
-  - Tell Claude Code:
-```
-    Create src/index.ts with a minimal MCP server using
-    @modelcontextprotocol/sdk. Use McpServer class and StdioServerTransport.
-    Register one placeholder tool called "mm_status" that returns
-    { success: true, message: "MoltMind is running", version: "0.1.0" }.
-    Add #!/usr/bin/env node shebang at top.
-    Remember: NEVER use console.log — only console.error for debug output.
-```
-
-- [ ] **1.5** Build and test the skeleton
-```bash
-  npm run build
-  echo '{"jsonrpc":"2.0","method":"initialize","id":1,"params":{"capabilities":{},"clientInfo":{"name":"test","version":"0.1.0"},"protocolVersion":"2025-03-26"}}' | node dist/index.js
-```
-
-- [ ] **1.6** Connect to Claude Code as a local MCP server
-```bash
-  claude mcp add --scope user moltmind-dev -- node $(pwd)/dist/index.js
-  claude mcp list
-```
-  - Restart Claude Code, run `/mcp` to verify connection
-  - Test: ask Claude to "use mm_status to check MoltMind"
-
-- [ ] **1.7** Git checkpoint
-```bash
-  git add -A
-  git commit -m "feat: minimal MCP server scaffold with mm_status placeholder"
-  git push origin main
-```
-
-**Checkpoint:** MCP server builds, connects to Claude Code, and responds to mm_status.
+**Checkpoint:** ✅ MCP server builds, connects, responds to mm_status.
 
 ---
 
-## Phase 2: Database Layer
-**Goal:** SQLite stores and retrieves memories.
+## Phase 2: Database Layer ✅
 
-- [ ] **2.1** Create src/types.ts
-  - Tell Claude Code:
-```
-    Create src/types.ts with TypeScript interfaces for:
-    - Memory { id, type, title, content, tags, metadata, embedding, tier,
-      created_at, updated_at, accessed_at, access_count, decay_score }
-    - MemoryType = 'learning' | 'error' | 'decision' | 'plan' | 'raw'
-    - MemoryTier = 'hot' | 'warm' | 'cold' | 'archived'
-    - Handoff { id, goal, current_state, next_action, constraints,
-      known_unknowns, artifacts, stop_conditions, session_id, created_at }
-    - SearchResult { id, title, content, type, score, tags, created_at }
-```
+**Goal:** SQLite stores and retrieves memories with FTS5 search.
 
-- [ ] **2.2** Create src/db.ts
-  - Tell Claude Code:
-```
-    Create src/db.ts following the conventions in CLAUDE.md.
+- [x] **2.1** src/types.ts — Memory, MemoryType, MemoryTier, Handoff, SearchResult interfaces
+- [x] **2.2** src/db.ts — SQLite with WAL, FTS5, triggers, dual vault resolution (project vs global)
+- [x] **2.3** tests/db.test.ts — 19 test scenarios (CRUD, FTS5, handoffs, vault init, edge cases)
+- [x] **2.4** Git checkpoint: `feat: SQLite database layer with FTS5 search`
 
-    It should:
-    1. Determine DB path: use .moltmind/memory.db if it exists in cwd,
-       otherwise use ~/.moltmind/memory.db
-    2. Create directories with mkdirSync recursive
-    3. Open with better-sqlite3 in WAL mode
-    4. Run CREATE TABLE IF NOT EXISTS for memories and handoffs tables
-    5. Create FTS5 virtual table: memories_fts on title + content
-    6. Keep FTS5 in sync using triggers (INSERT, UPDATE, DELETE)
-
-    Export functions:
-    - getDb(): returns the singleton database instance
-    - insertMemory(memory): inserts and returns the memory
-    - getMemory(id): returns one memory or null
-    - updateMemory(id, updates): updates fields, returns updated memory
-    - deleteMemory(id): soft-delete by setting tier to 'archived'
-    - searchMemoriesFTS(query, limit): full-text search
-    - getAllMemories(tier?, limit?): list with optional filters
-    - getMemoryStats(): return counts by type and tier
-    - insertHandoff(handoff): inserts and returns
-    - getLatestHandoff(): returns most recent handoff
-    - initProjectVault(): creates .moltmind/ in cwd and switches DB
-```
-
-- [ ] **2.3** Write database tests
-```bash
-  npx tsx --test tests/db.test.ts
-```
-
-- [ ] **2.4** Git checkpoint
-```bash
-  git add -A
-  git commit -m "feat: SQLite database layer with FTS5 search"
-  git push origin main
-```
-
-**Checkpoint:** Database creates, stores, retrieves, searches, and deletes memories. Tests pass.
+**Checkpoint:** ✅ Database creates, stores, retrieves, searches memories. All tests pass.
 
 ---
 
-## Phase 3: Embedding Engine
+## Phase 3: Production Hardening
+
+**Goal:** Fix architectural issues from audit before building more features.
+
+- [ ] **3.1** Add database migration system
+  - Tell Claude Code:
+```
+    Refactor src/db.ts to add a migration system. Create a `meta` table with key/value pairs.
+    Track schema_version (start at '1' for current schema). Write a migrate() function that
+    reads current version and runs sequential migration functions. Wrap each migration in a
+    transaction. Current schema = v1 (memories, handoffs, memories_fts + triggers).
+    v2 migrations will be added in Phase 5.
+```
+
+- [ ] **3.2** Fix insertMemory side-effect
+  - Tell Claude Code:
+```
+    In src/db.ts, insertMemory() currently calls getMemory() to return the inserted row, but
+    getMemory() has a side-effect: it increments access_count. Fix this by adding a private
+    getMemoryRaw(id) function that does a plain SELECT without updating accessed_at or
+    access_count. insertMemory() should call getMemoryRaw(). getMemory() (the public function)
+    keeps the side-effect behavior for normal reads. Update tests to expect access_count=0
+    on freshly inserted memories.
+```
+
+- [ ] **3.3** Fix getAllMemories to exclude archived
+  - Tell Claude Code:
+```
+    In src/db.ts, getAllMemories() should exclude tier='archived' by default. Add an optional
+    includeArchived boolean parameter (default false). When false, add WHERE tier != 'archived'.
+    Update existing tests and add a new test verifying archived memories are excluded.
+```
+
+- [ ] **3.4** Add graceful shutdown
+  - Tell Claude Code:
+```
+    In src/index.ts, inside main(), after server.connect(), add handlers for process.on('SIGINT')
+    and process.on('SIGTERM') that call closeDb() from db.ts, log "MoltMind shutting down" to
+    console.error, and call process.exit(0). This ensures SQLite WAL flushes cleanly.
+```
+
+- [ ] **3.5** Add CI workflow
+  - Tell Claude Code:
+```
+    Create .github/workflows/ci.yml — a GitHub Actions workflow that:
+    - Triggers on push to main and pull_request to main
+    - Runs on ubuntu-latest
+    - Steps: checkout, setup Node 18, npm ci, npm run lint, npm test
+    Keep it minimal.
+```
+
+- [ ] **3.6** Update tests for all hardening changes
+```bash
+  npm test
+```
+
+- [ ] **3.7** Git checkpoint
+```bash
+  git add -A
+  git commit -m "refactor: production hardening — migrations, side-effect fix, graceful shutdown, CI"
+  git push origin main
+```
+
+**Checkpoint:** Migration system works, insertMemory returns correct access_count, archived memories hidden by default, CI pipeline green.
+
+---
+
+## Phase 4: Embedding Engine
+
 **Goal:** Local semantic search works without any API keys.
 
-- [ ] **3.1** Create src/embeddings.ts
+- [ ] **4.1** Create src/embeddings.ts
   - Tell Claude Code:
 ```
     Create src/embeddings.ts following CLAUDE.md conventions.
-
     1. Use @xenova/transformers to load Xenova/all-MiniLM-L6-v2
     2. Lazy-load: don't load model on import, load on first embed() call
     3. Cache model directory: ~/.moltmind/models/
     4. Progress callback to console.error during download
-
+    5. If model loading fails or times out (30s), set a flag and degrade gracefully.
+       All future embed() calls return null instead of crashing.
+       Log warning once via console.error.
+    
     Export:
-    - async embed(text: string): Promise<Float32Array>
+    - async embed(text: string): Promise<Float32Array | null>
     - cosineSimilarity(a: Float32Array, b: Float32Array): number
-    - async semanticSearch(query, memories): Promise<Array<{id, score}>>
+    - async semanticSearch(query: string, memories: Memory[]): Promise<Array<{id: string, score: number}>>
     - embeddingToBuffer(embedding: Float32Array): Buffer
     - bufferToEmbedding(buffer: Buffer): Float32Array
+    - isModelReady(): boolean
 ```
 
-- [ ] **3.2** Write embedding tests
-```bash
-  npx tsx --test tests/embeddings.test.ts
-```
+- [ ] **4.2** Write embedding tests (tests/embeddings.test.ts)
+  - Mock the transformer model to avoid 22MB download in CI
+  - Test: cosineSimilarity returns 1.0 for identical vectors
+  - Test: cosineSimilarity returns ~0 for orthogonal vectors
+  - Test: embeddingToBuffer and bufferToEmbedding are reversible
+  - Test: embed() returns null when model unavailable (graceful degradation)
+  - Test: semanticSearch returns results sorted by score descending
 
-- [ ] **3.3** Git checkpoint
+- [ ] **4.3** Git checkpoint
 ```bash
   git add -A
-  git commit -m "feat: local embedding engine with semantic search"
+  git commit -m "feat: local embedding engine with semantic search and graceful degradation"
   git push origin main
 ```
 
-**Checkpoint:** Embeddings generate locally, semantic similarity works.
+**Checkpoint:** Embeddings generate locally, similarity works, graceful degradation on model failure.
 
 ---
 
-## Phase 4: Core MCP Tools
-**Goal:** All 8 tools registered, functional, and tested through Claude Code.
+## Phase 5: Diagnostics, Feedback & Adoption Metrics
 
-- [ ] **4.1** Build src/tools/mm_store.ts
-- [ ] **4.2** Build src/tools/mm_recall.ts (hybrid semantic + keyword search)
-- [ ] **4.3** Build src/tools/mm_read.ts
-- [ ] **4.4** Build src/tools/mm_update.ts
-- [ ] **4.5** Upgrade src/tools/mm_status.ts (real stats from DB)
-- [ ] **4.6** Build src/tools/mm_init.ts
-- [ ] **4.7** Build src/tools/mm_handoff_create.ts
-- [ ] **4.8** Build src/tools/mm_handoff_load.ts
-- [ ] **4.9** Register all 8 tools in src/index.ts
-- [ ] **4.10** Rebuild, reconnect MCP, and test every tool in Claude Code
+**Goal:** Every tool call is tracked, agents can submit feedback, adoption is measurable.
+
+- [ ] **5.1** Run v2 database migration
+  - Tell Claude Code:
+```
+    Add a migrate_v2() function to src/db.ts that creates the diagnostics, feedback, and
+    metrics tables as specified in CLAUDE.md. Bump schema_version to '2'. Run this migration
+    automatically when the database opens and detects version < 2.
+```
+
+- [ ] **5.2** Create src/diagnostics.ts
+  - Tell Claude Code:
+```
+    Create src/diagnostics.ts following the CLAUDE.md spec exactly.
+    Export:
+    - withDiagnostics(toolName, handler): wraps any tool handler with try/catch, timing,
+      and diagnostic logging. On error, returns { success: false, message } instead of throwing.
+    - logDiagnostic(toolName, success, latencyMs, errorMessage): inserts into diagnostics table.
+    - getHealthScore(): returns 0.0-1.0 based on success rate of last 100 operations.
+    - getRecentDiagnostics(limit): returns recent diagnostic entries.
+    - submitFeedback(type, message, toolName?): inserts into feedback table.
+    - getRecentFeedback(limit): returns recent feedback entries.
+    
+    Never log memory content. Only log tool_name, success, latency, error_message.
+```
+
+- [ ] **5.3** Create src/metrics.ts
+  - Tell Claude Code:
+```
+    Create src/metrics.ts following CLAUDE.md spec.
+    Export:
+    - initMetrics(): generate or read persistent instance_id from ~/.moltmind/instance_id,
+      increment total_sessions in metrics table, update last_seen.
+    - recordToolCall(toolName, success): increment total_tool_calls, update tool_calls_by_name
+      JSON, update errors_by_tool JSON if !success.
+    - getFullMetrics(): return a dashboard object with instance_id, total_sessions,
+      total_tool_calls, tool_calls_by_name, errors_by_tool, first_seen, last_seen,
+      uptime_seconds, health_score (from diagnostics).
+    
+    Call initMetrics() once in main() on startup.
+    Call recordToolCall() inside withDiagnostics() after each tool execution.
+    All data is LOCAL ONLY.
+```
+
+- [ ] **5.4** Write tests (tests/diagnostics.test.ts, tests/metrics.test.ts)
+  - Test: withDiagnostics catches errors and returns { success: false }
+  - Test: withDiagnostics records latency > 0
+  - Test: getHealthScore returns 1.0 when all operations succeed
+  - Test: getHealthScore returns 0.0 when all operations fail
+  - Test: submitFeedback stores and retrieves feedback
+  - Test: recordToolCall increments counters correctly
+  - Test: getFullMetrics returns complete dashboard
+
+- [ ] **5.5** Git checkpoint
+```bash
+  git add -A
+  git commit -m "feat: diagnostics, feedback, and adoption metrics system"
+  git push origin main
+```
+
+**Checkpoint:** Every tool call logged, feedback submittable, real-time metrics dashboard works.
+
+---
+
+## Phase 6: All 11 MCP Tools
+
+**Goal:** All tools registered, validated, wrapped with diagnostics, and tested.
+
+- [ ] **6.1** Create src/tools/mm_store.ts
+  - Zod schema: `{ title: string (max 500), content: string (max 50KB), type?: MemoryType, tags?: string[] (max 20), metadata?: object (max 10KB) }`
+  - Auto-embed content, auto-classify type if not provided, insert memory, return stored memory
+  - Wrapped with `withDiagnostics("mm_store", ...)`
+
+- [ ] **6.2** Create src/tools/mm_recall.ts
+  - Zod schema: `{ query: string (max 1000), limit?: number (1-500, default 10), tier?: MemoryTier, type?: MemoryType }`
+  - Hybrid search: semantic (0.7) + FTS5 keyword (0.3). If embeddings unavailable, fall back to FTS5-only.
+  - Return array of `{ id, title, content, type, score, tags }`
+
+- [ ] **6.3** Create src/tools/mm_read.ts
+  - Zod schema: `{ id: string }`
+  - Return full memory object or `{ success: false, message: "Memory not found" }`
+
+- [ ] **6.4** Create src/tools/mm_update.ts
+  - Zod schema: `{ id: string, title?: string, content?: string, type?: MemoryType, tags?: string[], metadata?: object, tier?: MemoryTier }`
+  - Re-embed if content changed. Return updated memory.
+
+- [ ] **6.5** Create src/tools/mm_delete.ts
+  - Zod schema: `{ id: string }`
+  - Soft-delete (set tier='archived'). Return `{ success: true, message: "Memory archived" }`
+
+- [ ] **6.6** Upgrade src/tools/mm_status.ts
+  - No input params. Return: `{ success, version, db_stats (from getMemoryStats), health_score (from getHealthScore), embedding_model_ready (from isModelReady), uptime_seconds }`
+
+- [ ] **6.7** Create src/tools/mm_init.ts
+  - No input params. Call `initProjectVault()`. Return `{ success: true, path: ".moltmind/memory.db" }`
+
+- [ ] **6.8** Create src/tools/mm_handoff_create.ts
+  - Zod schema: `{ goal: string, current_state: string, next_action: string, constraints?: string[], known_unknowns?: string[], artifacts?: string[], stop_conditions?: string[] }`
+  - Generate session_id, insert handoff, return handoff object
+
+- [ ] **6.9** Create src/tools/mm_handoff_load.ts
+  - No input params. Return latest handoff or `{ success: false, message: "No handoff found" }`
+
+- [ ] **6.10** Create src/tools/mm_feedback.ts
+  - Zod schema: `{ type: 'bug' | 'feature_request' | 'friction', message: string (max 2000), tool_name?: string }`
+  - Call `submitFeedback()`. Return `{ success: true }`
+
+- [ ] **6.11** Create src/tools/mm_metrics.ts
+  - No input params. Call `getFullMetrics()`. Return the full dashboard object.
+
+- [ ] **6.12** Register all 11 tools in src/index.ts
+  - Import all tool handlers
+  - Register each with `server.tool(name, description, zodSchema, withDiagnostics(name, handler))`
+  - Call `initMetrics()` in `main()` before `server.connect()`
+
+- [ ] **6.13** Rebuild and test end-to-end in Claude Code
 ```bash
   npm run build
   claude mcp remove moltmind-dev
   claude mcp add --scope user moltmind-dev -- node $(pwd)/dist/index.js
 ```
-- [ ] **4.11** Write tool tests in tests/tools.test.ts
-- [ ] **4.12** Git checkpoint
+  - Test every tool via Claude Code conversation
+  - Verify mm_metrics shows correct call counts after testing
+
+- [ ] **6.14** Write comprehensive tool tests (tests/tools.test.ts)
+  - Every tool: 1 happy-path + 1 error-path test minimum
+  - Test input validation: oversized content, invalid type, missing required fields
+  - Test hybrid search: verify results include both semantic and keyword matches
+  - Test graceful degradation: mm_recall works when embeddings unavailable
+
+- [ ] **6.15** Git checkpoint
 ```bash
   git add -A
-  git commit -m "feat: all 8 MCP tools implemented and tested"
+  git commit -m "feat: all 11 MCP tools with validation, diagnostics, and full test coverage"
   git push origin main
 ```
 
-**Checkpoint:** All 8 tools work end-to-end in Claude Code.
+**Checkpoint:** All 11 tools work end-to-end. Every tool validates input, catches errors, logs diagnostics. CI green.
 
 ---
 
-## Phase 5: Package & Publish to npm
+## Phase 7: Package & Publish to npm
+
 **Goal:** Anyone can install with `npx -y moltmind`.
 
-- [ ] **5.1** Prepare package.json for publishing (files, bin, keywords, repository)
-- [ ] **5.2** Write full README.md (quick start, tools table, architecture)
-- [ ] **5.3** Create .npmignore
-- [ ] **5.4** Publish
+- [ ] **7.1** Prepare package.json for publishing
+  - Add `"files": ["dist/", "README.md", "LICENSE"]` to limit what ships to npm
+  - Verify `bin`, `main`, `keywords`, `repository` fields
+  - Bump version if needed
+
+- [ ] **7.2** Write full README.md
+  - Quick start (3 lines: npx install, claude mcp add, verify)
+  - Tools table (all 11 with descriptions)
+  - Architecture overview (local SQLite + embeddings + MCP)
+  - How it works section (hybrid search, memory tiers, handoffs)
+  - Contributing guide link
+  - License
+
+- [ ] **7.3** Create .npmignore
+```
+  src/
+  tests/
+  .github/
+  .moltmind/
+  CLAUDE.md
+  plan.md
+  tsconfig.json
+  *.db
+```
+
+- [ ] **7.4** Dry run and publish
 ```bash
   npm run clean && npm run build
   npm publish --dry-run
+  # Review the file list — should only include dist/, README.md, LICENSE, package.json
   npm publish
 ```
-- [ ] **5.5** Verify: `npx -y moltmind` works from a temp directory
-- [ ] **5.6** Switch Claude Code to the published version
+
+- [ ] **7.5** Verify installation
+```bash
+  cd /tmp && mkdir moltmind-test && cd moltmind-test
+  npx -y moltmind
+  # Should start and respond to STDIO
+```
+
+- [ ] **7.6** Switch Claude Code to published version
 ```bash
   claude mcp remove moltmind-dev
   claude mcp add moltmind -- npx -y moltmind
+  claude mcp list
 ```
-- [ ] **5.7** Git tag and push
+
+- [ ] **7.7** Git tag and push
 ```bash
   git add -A
   git commit -m "chore: publish v0.1.0 to npm"
@@ -254,33 +361,37 @@
   git push origin main --tags
 ```
 
-**Checkpoint:** `npx -y moltmind` works globally. Package live on npmjs.com.
+**Checkpoint:** `npx -y moltmind` works globally. Package live on npmjs.com/package/moltmind.
 
 ---
 
-## Phase 6: Go Live on Moltbook
+## Phase 8: Go Live on Moltbook
+
 **Goal:** MoltMind agent registered, claimed, and posting on moltbook.com.
 
-- [ ] **6.1** Register agent via Moltbook API — SAVE the api_key immediately
-- [ ] **6.2** Claim agent (open claim URL, verify email, post verification tweet)
-- [ ] **6.3** Post launch announcement to m/agents
-- [ ] **6.4** Cross-post to m/infrastructure, m/showandtell, m/automation (30 min apart)
-- [ ] **6.5** Engage: comment helpfully on memory-related posts
-- [ ] **6.6** Create m/moltmind submolt for community support
+- [ ] **8.1** Register agent via Moltbook API (POST /api/v1/agents/register) — SAVE the api_key immediately
+- [ ] **8.2** Claim agent (open claim URL, verify email, post verification tweet)
+- [ ] **8.3** Post launch announcement to m/agents
+  - Include: what it does, npx install command, tool list, "built by agent+human" narrative
+- [ ] **8.4** Cross-post to m/infrastructure, m/showandtell, m/automation (space 30 min apart)
+- [ ] **8.5** Engage: comment helpfully on memory-related posts in m/agents
+- [ ] **8.6** Create m/moltmind submolt for community, support, and feature requests
 
-**Checkpoint:** Agent live on Moltbook, launch posts up, community engaging.
+**Checkpoint:** Agent live on Moltbook, launch posts generating engagement.
 
 ---
 
-## Phase 7: Iterate & Monetize (Week 2+)
+## Phase 9: Iterate & Monetize (Week 2+)
 
-- [ ] **7.1** Monitor npm downloads and GitHub issues
-- [ ] **7.2** Fix bugs, release patch versions
-- [ ] **7.3** Build cloud sync backend (Supabase) for Pro tier
-- [ ] **7.4** Build landing page at moltmind.dev (Vercel)
-- [ ] **7.5** Add Stripe billing ($7/mo Pro, $19/mo Team)
-- [ ] **7.6** Add cross-agent memory sharing tools (mm_share, mm_import_shared)
-- [ ] **7.7** Build web dashboard for memory analytics
+- [ ] **9.1** Monitor npm downloads (`npm info moltmind`) and GitHub issues daily
+- [ ] **9.2** Fix bugs from feedback, release patch versions (v0.1.1, v0.1.2, etc.)
+- [ ] **9.3** Build cloud sync backend (Supabase) for Pro tier
+- [ ] **9.4** Build landing page at moltmind.dev (Vercel)
+- [ ] **9.5** Add Stripe billing ($7/mo Pro, $19/mo Team)
+- [ ] **9.6** Implement tier enforcement: check license key on startup, gate Pro/Team features
+- [ ] **9.7** Add cross-agent memory sharing tools (mm_share, mm_import_shared) for Team tier
+- [ ] **9.8** Build web dashboard for memory analytics
+- [ ] **9.9** Add encrypted-at-rest option for Pro/Team (user-provided key)
 
 ---
 
@@ -294,6 +405,39 @@
 | `npm test` | Run all tests |
 | `npm run lint` | Type check |
 | `npm publish` | Publish to npm |
-| `claude mcp add moltmind -- npx -y moltmind` | Install as user |
+| `claude mcp add moltmind -- npx -y moltmind` | Install as user MCP server |
 | `/mcp` | Check MCP status inside Claude Code |
 | `/clear` | Reset context between tasks |
+
+## Architecture Diagram
+```
+Agent (Claude Code / any MCP client)
+  │
+  ▼ (STDIO JSON-RPC)
+┌─────────────────────────────────────────────┐
+│  src/index.ts — MCP Server                  │
+│  ├── 11 tools registered with zod schemas   │
+│  ├── withDiagnostics() on every tool        │
+│  ├── initMetrics() on startup               │
+│  └── SIGINT/SIGTERM → closeDb()             │
+├─────────────────────────────────────────────┤
+│  src/tools/*.ts — Tool handlers             │
+│  └── Input validation → business logic →    │
+│      { success: bool, ...data }             │
+├─────────────────────────────────────────────┤
+│  src/embeddings.ts    │  src/diagnostics.ts │
+│  Xenova/MiniLM-L6-v2  │  withDiagnostics()  │
+│  384-dim vectors       │  health score       │
+│  Graceful degradation  │  feedback system    │
+├─────────────────────────────────────────────┤
+│  src/db.ts — SQLite + WAL + FTS5            │
+│  Schema v1: memories, handoffs, FTS5        │
+│  Schema v2: + diagnostics, feedback, metrics│
+│  Migration system with versioning           │
+├─────────────────────────────────────────────┤
+│  ~/.moltmind/memory.db  (global vault)      │
+│  ./.moltmind/memory.db  (project vault)     │
+│  ~/.moltmind/models/    (embedding model)   │
+│  ~/.moltmind/instance_id (adoption tracking)│
+└─────────────────────────────────────────────┘
+```

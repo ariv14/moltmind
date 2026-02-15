@@ -48,7 +48,7 @@ describe("Database Layer", () => {
       assert.deepEqual(memory.tags, ["test", "unit"]);
       assert.deepEqual(memory.metadata, { source: "test" });
       assert.equal(memory.tier, "hot");
-      assert.equal(memory.access_count, 1); // getMemory increments on read
+      assert.equal(memory.access_count, 0); // insertMemory uses raw SELECT, no side-effect
       assert.ok(memory.created_at);
     });
   });
@@ -87,10 +87,10 @@ describe("Database Layer", () => {
         tier: "hot",
       });
 
-      // insertMemory calls getMemory once (access_count = 1)
-      db.getMemory(inserted.id); // access_count = 2
-      const third = db.getMemory(inserted.id); // access_count = 3
-      assert.equal(third!.access_count, 3);
+      // insertMemory does NOT increment (access_count = 0)
+      db.getMemory(inserted.id); // access_count = 1
+      const second = db.getMemory(inserted.id); // access_count = 2
+      assert.equal(second!.access_count, 2);
     });
   });
 
@@ -201,6 +201,19 @@ describe("Database Layer", () => {
       assert.equal(hot.length, 1);
       assert.equal(hot[0].title, "Hot");
     });
+
+    it("should exclude archived memories by default", () => {
+      db.insertMemory({ type: "raw", title: "Active", content: "a", tags: [], metadata: {}, embedding: null, tier: "hot" });
+      const toArchive = db.insertMemory({ type: "raw", title: "Archived", content: "b", tags: [], metadata: {}, embedding: null, tier: "hot" });
+      db.deleteMemory(toArchive.id); // soft-delete sets tier to 'archived'
+
+      const defaultResult = db.getAllMemories();
+      assert.equal(defaultResult.length, 1);
+      assert.equal(defaultResult[0].title, "Active");
+
+      const withArchived = db.getAllMemories(undefined, 100, true);
+      assert.equal(withArchived.length, 2);
+    });
   });
 
   describe("getMemoryStats", () => {
@@ -270,6 +283,28 @@ describe("Database Layer", () => {
     it("should return null when no handoffs exist", () => {
       const result = db.getLatestHandoff();
       assert.equal(result, null);
+    });
+  });
+
+  describe("migrations", () => {
+    it("should set schema version to 1 after initial migration", () => {
+      const version = db.getDbSchemaVersion();
+      assert.equal(version, 1);
+    });
+
+    it("should be idempotent — reopening DB does not re-run migrations", () => {
+      // Insert data, close, reopen — data should persist and version stays at 1
+      db.insertMemory({ type: "raw", title: "Before reopen", content: "test", tags: [], metadata: {}, embedding: null, tier: "hot" });
+
+      db.closeDb();
+      db.getDb(); // reopen triggers migrate() which should be a no-op
+
+      const version = db.getDbSchemaVersion();
+      assert.equal(version, 1);
+
+      const all = db.getAllMemories();
+      assert.equal(all.length, 1);
+      assert.equal(all[0].title, "Before reopen");
     });
   });
 

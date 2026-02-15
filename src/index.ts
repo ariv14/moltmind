@@ -2,6 +2,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { closeDb } from "./db.js";
 
 const server = new McpServer({
   name: "moltmind",
@@ -28,9 +29,19 @@ server.tool(
   }
 );
 
+function shutdown(): void {
+  console.error("MoltMind shutting down");
+  closeDb();
+  process.exit(0);
+}
+
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
+
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+
   console.error("MoltMind MCP server started");
 }
 

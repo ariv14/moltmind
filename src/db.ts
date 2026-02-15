@@ -23,7 +23,21 @@ function ensureDir(dirPath: string): void {
   mkdirSync(dirPath, { recursive: true });
 }
 
-function initSchema(database: Database.Database): void {
+function getSchemaVersion(database: Database.Database): number {
+  // Create meta table if it doesn't exist
+  database.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)");
+
+  const row = database.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as { value: string } | undefined;
+  return row ? parseInt(row.value, 10) : 0;
+}
+
+function setSchemaVersion(database: Database.Database, version: number): void {
+  database.prepare(
+    "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)"
+  ).run(String(version));
+}
+
+function migrateV1(database: Database.Database): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS memories (
       id TEXT PRIMARY KEY,
@@ -80,6 +94,24 @@ function initSchema(database: Database.Database): void {
   `);
 }
 
+const migrations: Array<(database: Database.Database) => void> = [
+  migrateV1,
+  // migrateV2 will be added in Phase 5
+];
+
+function migrate(database: Database.Database): void {
+  const currentVersion = getSchemaVersion(database);
+
+  for (let i = currentVersion; i < migrations.length; i++) {
+    const txn = database.transaction(() => {
+      migrations[i](database);
+      setSchemaVersion(database, i + 1);
+    });
+    txn();
+    console.error(`MoltMind: migrated database to schema v${i + 1}`);
+  }
+}
+
 export function getDb(): Database.Database {
   if (db) return db;
 
@@ -89,9 +121,14 @@ export function getDb(): Database.Database {
 
   db = new Database(dbPath);
   db.pragma("journal_mode = WAL");
-  initSchema(db);
+  migrate(db);
 
   return db;
+}
+
+export function getDbSchemaVersion(): number {
+  const database = getDb();
+  return getSchemaVersion(database);
 }
 
 export function closeDb(): void {
@@ -134,6 +171,13 @@ function rowToHandoff(row: Record<string, unknown>): Handoff {
   };
 }
 
+function getMemoryRaw(id: string): Memory | null {
+  const database = getDb();
+  const row = database.prepare("SELECT * FROM memories WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+  if (!row) return null;
+  return rowToMemory(row);
+}
+
 export function insertMemory(memory: Omit<Memory, "id" | "created_at" | "updated_at" | "accessed_at" | "access_count" | "decay_score"> & Partial<Pick<Memory, "id" | "created_at" | "updated_at" | "accessed_at" | "access_count" | "decay_score">>): Memory {
   const database = getDb();
   const now = new Date().toISOString();
@@ -160,7 +204,7 @@ export function insertMemory(memory: Omit<Memory, "id" | "created_at" | "updated
     memory.decay_score ?? 1.0,
   );
 
-  return getMemory(id)!;
+  return getMemoryRaw(id)!;
 }
 
 export function getMemory(id: string): Memory | null {
@@ -225,7 +269,7 @@ export function searchMemoriesFTS(query: string, limit: number = 10): Memory[] {
   return rows.map(rowToMemory);
 }
 
-export function getAllMemories(tier?: MemoryTier, limit: number = 100): Memory[] {
+export function getAllMemories(tier?: MemoryTier, limit: number = 100, includeArchived: boolean = false): Memory[] {
   const database = getDb();
 
   if (tier) {
@@ -233,7 +277,12 @@ export function getAllMemories(tier?: MemoryTier, limit: number = 100): Memory[]
     return rows.map(rowToMemory);
   }
 
-  const rows = database.prepare("SELECT * FROM memories ORDER BY updated_at DESC LIMIT ?").all(limit) as Record<string, unknown>[];
+  if (includeArchived) {
+    const rows = database.prepare("SELECT * FROM memories ORDER BY updated_at DESC LIMIT ?").all(limit) as Record<string, unknown>[];
+    return rows.map(rowToMemory);
+  }
+
+  const rows = database.prepare("SELECT * FROM memories WHERE tier != 'archived' ORDER BY updated_at DESC LIMIT ?").all(limit) as Record<string, unknown>[];
   return rows.map(rowToMemory);
 }
 
@@ -295,7 +344,7 @@ export function initProjectVault(): string {
   closeDb();
   db = new Database(PROJECT_DB_PATH);
   db.pragma("journal_mode = WAL");
-  initSchema(db);
+  migrate(db);
 
   return PROJECT_DB_PATH;
 }
