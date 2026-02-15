@@ -31,6 +31,49 @@ export interface Handoff {
   created_at: string;
 }
 
+// --- Moltbook types ---
+
+export interface MoltbookAgent {
+  name: string;
+  display_name?: string;
+  bio?: string;
+  avatar_url?: string;
+  followers_count?: number;
+  following_count?: number;
+  post_count?: number;
+  created_at?: string;
+}
+
+export interface MoltbookPost {
+  id: string;
+  title: string;
+  content: string;
+  author: string;
+  submolt?: string;
+  upvotes: number;
+  downvotes: number;
+  comment_count: number;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface MoltbookComment {
+  id: string;
+  post_id: string;
+  parent_id?: string;
+  author: string;
+  content: string;
+  upvotes: number;
+  created_at: string;
+}
+
+export interface MoltbookSubmolt {
+  name: string;
+  description: string;
+  subscriber_count: number;
+  created_at: string;
+}
+
 export interface SearchResult {
   id: string;
   title: string;

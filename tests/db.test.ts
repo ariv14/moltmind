@@ -287,20 +287,20 @@ describe("Database Layer", () => {
   });
 
   describe("migrations", () => {
-    it("should set schema version to 2 after all migrations", () => {
+    it("should set schema version to 3 after all migrations", () => {
       const version = db.getDbSchemaVersion();
-      assert.equal(version, 2);
+      assert.equal(version, 3);
     });
 
     it("should be idempotent — reopening DB does not re-run migrations", () => {
-      // Insert data, close, reopen — data should persist and version stays at 2
+      // Insert data, close, reopen — data should persist and version stays at 3
       db.insertMemory({ type: "raw", title: "Before reopen", content: "test", tags: [], metadata: {}, embedding: null, tier: "hot" });
 
       db.closeDb();
       db.getDb(); // reopen triggers migrate() which should be a no-op
 
       const version = db.getDbSchemaVersion();
-      assert.equal(version, 2);
+      assert.equal(version, 3);
 
       const all = db.getAllMemories();
       assert.equal(all.length, 1);

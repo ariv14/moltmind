@@ -121,9 +121,20 @@ function migrateV2(database: Database.Database): void {
   `);
 }
 
+function migrateV3(database: Database.Database): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS moltbook_auth (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+}
+
 const migrations: Array<(database: Database.Database) => void> = [
   migrateV1,
   migrateV2,
+  migrateV3,
 ];
 
 function migrate(database: Database.Database): void {
@@ -163,6 +174,7 @@ export function closeDb(): void {
     db.close();
     db = null;
   }
+  closeGlobalDb();
 }
 
 function rowToMemory(row: Record<string, unknown>): Memory {
@@ -490,6 +502,46 @@ export function setMetric(key: string, value: string): void {
   database.prepare(
     "INSERT OR REPLACE INTO metrics (key, value, updated_at) VALUES (?, ?, ?)"
   ).run(key, value, new Date().toISOString());
+}
+
+// --- Global DB for moltbook auth (always uses ~/.moltmind/memory.db) ---
+
+let globalDb: Database.Database | null = null;
+
+export function getGlobalDb(): Database.Database {
+  if (globalDb) return globalDb;
+
+  ensureDir(GLOBAL_DIR);
+  globalDb = new Database(GLOBAL_DB_PATH);
+  globalDb.pragma("journal_mode = WAL");
+  migrate(globalDb);
+
+  return globalDb;
+}
+
+export function closeGlobalDb(): void {
+  if (globalDb) {
+    globalDb.close();
+    globalDb = null;
+  }
+}
+
+export function getMoltbookAuth(key: string): string | null {
+  const database = getGlobalDb();
+  const row = database.prepare("SELECT value FROM moltbook_auth WHERE key = ?").get(key) as { value: string } | undefined;
+  return row ? row.value : null;
+}
+
+export function setMoltbookAuth(key: string, value: string): void {
+  const database = getGlobalDb();
+  database.prepare(
+    "INSERT OR REPLACE INTO moltbook_auth (key, value, updated_at) VALUES (?, ?, ?)"
+  ).run(key, value, new Date().toISOString());
+}
+
+export function deleteMoltbookAuth(key: string): void {
+  const database = getGlobalDb();
+  database.prepare("DELETE FROM moltbook_auth WHERE key = ?").run(key);
 }
 
 export function initProjectVault(): string {

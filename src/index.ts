@@ -17,6 +17,13 @@ import { handleMmHandoffCreate } from "./tools/mm_handoff_create.js";
 import { handleMmHandoffLoad } from "./tools/mm_handoff_load.js";
 import { handleMmFeedback } from "./tools/mm_feedback.js";
 import { handleMmMetrics } from "./tools/mm_metrics.js";
+import { handleMbAuth } from "./tools/mb_auth.js";
+import { handleMbPost } from "./tools/mb_post.js";
+import { handleMbFeed } from "./tools/mb_feed.js";
+import { handleMbComment } from "./tools/mb_comment.js";
+import { handleMbVote } from "./tools/mb_vote.js";
+import { handleMbSocial } from "./tools/mb_social.js";
+import { handleMbSubmolt } from "./tools/mb_submolt.js";
 
 const server = new McpServer({
   name: "moltmind",
@@ -149,6 +156,91 @@ server.tool(
   "Get a full adoption and health dashboard: install age, session count, per-tool usage stats, error rates, and feedback summary.",
   {},
   wrapTool("mm_metrics", () => handleMmMetrics())
+);
+
+// --- Moltbook Tool Registration ---
+
+server.tool(
+  "mb_auth",
+  "Authenticate with moltbook.com (social network for AI agents). Actions: register (create account), login (with existing API key), status (check auth), update_profile. Rate limits: 100 req/min.",
+  {
+    action: z.enum(["register", "login", "status", "update_profile"]).describe("Auth action to perform"),
+    username: z.string().max(50).optional().describe("Username for register"),
+    api_key: z.string().optional().describe("API key for login"),
+    display_name: z.string().max(100).optional().describe("Display name for register/update_profile"),
+    bio: z.string().max(500).optional().describe("Bio for register/update_profile"),
+  },
+  wrapTool("mb_auth", (args) => handleMbAuth(args as Parameters<typeof handleMbAuth>[0]))
+);
+
+server.tool(
+  "mb_post",
+  "Create, view, or delete posts on moltbook.com. Actions: create, get, delete. Rate limit: 1 post per 30 minutes.",
+  {
+    action: z.enum(["create", "get", "delete"]).describe("Post action to perform"),
+    id: z.string().optional().describe("Post ID (for get/delete)"),
+    title: z.string().max(300).optional().describe("Post title (for create)"),
+    content: z.string().max(10000).optional().describe("Post content (for create)"),
+    submolt: z.string().max(50).optional().describe("Submolt to post in (for create)"),
+  },
+  wrapTool("mb_post", (args) => handleMbPost(args as Parameters<typeof handleMbPost>[0]))
+);
+
+server.tool(
+  "mb_feed",
+  "Browse feeds and search on moltbook.com. Actions: browse (public feed), personal (followed agents), search (query posts). Rate limit: 100 req/min.",
+  {
+    action: z.enum(["browse", "personal", "search"]).describe("Feed action to perform"),
+    sort: z.string().optional().describe("Sort order: hot, new, top (for browse)"),
+    limit: z.number().int().min(1).max(50).optional().describe("Number of posts to return"),
+    query: z.string().max(200).optional().describe("Search query (for search action)"),
+    submolt: z.string().max(50).optional().describe("Filter by submolt (for browse)"),
+  },
+  wrapTool("mb_feed", (args) => handleMbFeed(args as Parameters<typeof handleMbFeed>[0]))
+);
+
+server.tool(
+  "mb_comment",
+  "Add comments or replies on moltbook.com posts, or list comments. Actions: create, list. Rate limit: 50 comments/day, 1 comment per 20s cooldown.",
+  {
+    action: z.enum(["create", "list"]).describe("Comment action to perform"),
+    post_id: z.string().optional().describe("Post ID to comment on or list comments from"),
+    content: z.string().max(5000).optional().describe("Comment content (for create)"),
+    parent_id: z.string().optional().describe("Parent comment ID for nested replies (for create)"),
+  },
+  wrapTool("mb_comment", (args) => handleMbComment(args as Parameters<typeof handleMbComment>[0]))
+);
+
+server.tool(
+  "mb_vote",
+  "Vote on posts and comments on moltbook.com. Actions: upvote_post, downvote_post, upvote_comment.",
+  {
+    action: z.enum(["upvote_post", "downvote_post", "upvote_comment"]).describe("Vote action to perform"),
+    post_id: z.string().optional().describe("Post ID (for upvote_post/downvote_post)"),
+    comment_id: z.string().optional().describe("Comment ID (for upvote_comment)"),
+  },
+  wrapTool("mb_vote", (args) => handleMbVote(args as Parameters<typeof handleMbVote>[0]))
+);
+
+server.tool(
+  "mb_social",
+  "Follow/unfollow agents and view profiles on moltbook.com. Actions: follow, unfollow, profile.",
+  {
+    action: z.enum(["follow", "unfollow", "profile"]).describe("Social action to perform"),
+    name: z.string().max(50).optional().describe("Agent username"),
+  },
+  wrapTool("mb_social", (args) => handleMbSocial(args as Parameters<typeof handleMbSocial>[0]))
+);
+
+server.tool(
+  "mb_submolt",
+  "Manage communities (submolts) on moltbook.com. Actions: create, list, get, subscribe, unsubscribe.",
+  {
+    action: z.enum(["create", "list", "get", "subscribe", "unsubscribe"]).describe("Submolt action to perform"),
+    name: z.string().max(50).optional().describe("Submolt name"),
+    description: z.string().max(500).optional().describe("Submolt description (for create)"),
+  },
+  wrapTool("mb_submolt", (args) => handleMbSubmolt(args as Parameters<typeof handleMbSubmolt>[0]))
 );
 
 // --- Server lifecycle ---
