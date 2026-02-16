@@ -10,7 +10,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx watch src/index.ts",
-    "test": "tsx --test tests/**/*.test.ts",
+    "test": "tsx --test tests/*.test.ts",
     "lint": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
