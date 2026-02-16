@@ -54,11 +54,17 @@ export async function handleMbAuth(args: {
         return { success: false, message: res.error ?? "Login failed — invalid API key" };
       }
       storeToken(args.api_key);
-      storeUsername(res.data!.name);
+      // API may return { success, agent: { name, ... } } or { name, ... } directly
+      const raw = res.data as unknown as Record<string, unknown>;
+      const agent = (raw?.agent ?? raw) as MoltbookAgent;
+      const username = agent?.name ?? "unknown";
+      if (username !== "unknown") {
+        storeUsername(username);
+      }
       return {
         success: true,
-        message: `Logged in as ${res.data!.name}. API key stored securely.`,
-        agent: res.data,
+        message: `Logged in as ${username}. API key stored securely.`,
+        agent,
       };
     }
 
@@ -75,11 +81,19 @@ export async function handleMbAuth(args: {
         clearToken();
         return { success: true, authenticated: false, message: "Token expired or invalid. Please re-authenticate." };
       }
+      // API may return { success, agent: { ... } } or { ... } directly
+      const rawStatus = res.data as unknown as Record<string, unknown>;
+      const agentStatus = (rawStatus?.agent ?? rawStatus) as MoltbookAgent;
+      const storedUsername = getStoredUsername();
+      // Backfill username if missing from a previous buggy login
+      if (!storedUsername && agentStatus?.name) {
+        storeUsername(agentStatus.name);
+      }
       return {
         success: true,
         authenticated: true,
-        username: getStoredUsername(),
-        agent: res.data,
+        username: storedUsername ?? agentStatus?.name,
+        agent: agentStatus,
       };
     }
 

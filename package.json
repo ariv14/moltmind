@@ -1,6 +1,6 @@
 {
   "name": "moltmind",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Agent Memory MCP Server — persistent semantic memory for AI agents",
   "type": "module",
   "bin": {
