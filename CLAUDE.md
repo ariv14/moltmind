@@ -57,9 +57,12 @@ See @README.md for user-facing documentation and @package.json for available scr
 ```
 src/
 ├── index.ts          # MCP server setup, tool registration, shutdown handlers. Entry point with shebang.
-├── config.ts         # --moltbook flag parsing, isToolEnabled(), getToolMode().
+├── config.ts         # --moltbook/--zvec flag parsing, isToolEnabled(), getToolMode(), isZvecEnabled().
 ├── db.ts             # SQLite schema, migrations, all database CRUD functions. Singleton pattern.
 ├── embeddings.ts     # Model loading, embedding generation, cosine similarity, semantic search.
+├── license.ts        # RSA license validation, free tier limits (20/day, 200 total), machine-locked keys.
+├── vector_store.ts   # VectorStore interface, BruteForceStore, cached singleton (initVectorStore/getVectorStore).
+├── vector_store_zvec.ts # ZvecStore wrapping @moltmind/zvec-native, migration helper.
 ├── diagnostics.ts    # withDiagnostics() wrapper, health score, diagnostics table, feedback table, token tracking.
 ├── metrics.ts        # Adoption metrics: instance_id, session lifecycle, tool usage counters, getFullMetrics().
 ├── token_estimator.ts # Token cost estimation heuristics and savings tracking.
@@ -79,12 +82,16 @@ src/
     ├── mm_session_history.ts
     ├── mm_feedback.ts
     └── mm_metrics.ts
+scripts/
+└── generate-license.ts  # RSA key generator (NOT published to npm). Signs instance_id with private key.
 tests/
 ├── db.test.ts
 ├── embeddings.test.ts
 ├── diagnostics.test.ts
 ├── metrics.test.ts
 ├── token_estimator.test.ts
+├── license.test.ts
+├── vector_store.test.ts
 └── tools.test.ts
 .github/
 └── workflows/
@@ -95,12 +102,12 @@ tests/
 
 | Tool | Purpose |
 |------|---------|
-| `mm_store` | Store a new memory with auto-embedding and type classification |
+| `mm_store` | Store a new memory with auto-embedding and type classification. Enforces free tier limits (20/day, 200 total). |
 | `mm_recall` | Hybrid search: semantic (0.7 weight) + FTS5 keyword (0.3 weight) |
 | `mm_read` | Read a single memory by ID (updates accessed_at and access_count) |
 | `mm_update` | Update specific fields of an existing memory |
 | `mm_delete` | Soft-delete a memory (sets tier to 'archived') |
-| `mm_status` | Server health: DB stats, embedding model status, health score, uptime |
+| `mm_status` | Server health: DB stats, embedding model status, health score, uptime, tier (free/pro), usage |
 | `mm_init` | Create a project-local vault in `.moltmind/` of current directory |
 | `mm_handoff_create` | Create a structured handoff document for agent-to-agent transitions |
 | `mm_handoff_load` | Load the most recent handoff to resume context |
@@ -231,11 +238,13 @@ CREATE TABLE IF NOT EXISTS token_estimates (
 - All metrics are LOCAL ONLY in free tier — nothing leaves the machine.
 - `mm_metrics` tool returns a formatted dashboard of all adoption data.
 
-### Tool Mode & --moltbook Flag (src/config.ts)
+### Tool Mode & CLI Flags (src/config.ts)
 
 - By default, only 14 core `mm_*` tools are registered (~500 tokens overhead).
 - With `--moltbook` flag, 7 additional `mb_*` social tools are registered (~1,000 tokens total overhead).
-- `isMoltbookEnabled()` reads `process.argv` once and caches the result.
+- With `--zvec` flag, Zvec ANN vector search is activated (requires Pro license + `@moltmind/zvec-native`).
+- With `--upgrade` flag, opens browser to license checkout page and exits (does not start MCP server).
+- `isMoltbookEnabled()` and `isZvecEnabled()` each read `process.argv` once and cache the result.
 - `isToolEnabled(toolName)` returns `false` for `mb_*` tools unless `--moltbook` is set.
 - In `src/index.ts`, moltbook tool imports are dynamic (`await import(...)`) inside `registerMoltbookTools()` — only loaded when `--moltbook` is passed.
 
@@ -257,6 +266,73 @@ CREATE TABLE IF NOT EXISTS token_estimates (
 - **Session save:** Agents can call `mm_session_save` to attach summary, actions_taken, outcomes, and where_left_off to the current session.
 - **Session resume:** `mm_session_resume` loads recent sessions + latest handoff so agents can restore context after a restart.
 - **Session history:** `mm_session_history` lists past sessions with per-session tool call stats from the diagnostics table.
+
+### License System (src/license.ts)
+
+- **RSA-signed, machine-locked licenses.** The public key is embedded in `src/license.ts`; the private key stays at `~/.moltmind/license-private.pem` (never published).
+- License key format: `MMPRO-{instance_id_prefix_8chars}-{base64url-RSA-signature}`
+- `validateLicense()` reads `~/.moltmind/license.key` and `~/.moltmind/instance_id`, verifies the RSA signature against the embedded public key, and caches the result for the process lifetime.
+- `_resetLicenseCache()` exported for testing — resets the cached validation result.
+- `isProTier()` returns `true` if the license is valid.
+- `checkStoreLimits()` returns `{ allowed, message }` — checks Pro tier first, then total memories (200 cap), then daily stores (20 cap).
+
+### Free Tier Limits
+
+| | Free Tier | Pro Tier |
+|--|-----------|----------|
+| Memory stores per day | 20 | Unlimited |
+| Total memories | 200 | Unlimited |
+| Search (`mm_recall`) | Unlimited | Unlimited |
+| Session tools | Unlimited | Unlimited |
+| Vector search | Brute-force | Zvec ANN (with `--zvec`) |
+
+- Only `mm_store` is gated. All other tools remain unlimited on free tier.
+- `getDailyStoreCount()` in `src/db.ts` counts today's non-archived memories (efficient — free tier maxes at 200).
+- Limits are checked at the top of `handleMmStore()` before embedding or inserting.
+
+### VectorStore Abstraction (src/vector_store.ts)
+
+- **`VectorStore` interface:** `upsert(id, vector)`, `search(query, k)`, `delete(id)`.
+- **`BruteForceStore`:** Wraps existing `getAllMemories()` + `cosineSimilarity()` loop. `upsert()`/`delete()` are no-ops (SQLite BLOB is the store).
+- **Cached singleton:** `initVectorStore(store)` sets the active store at startup. `getVectorStore(tier?)` returns the active store or creates a new `BruteForceStore` per-call.
+- **`_resetVectorStore()`** exported for testing.
+- **Dual-write strategy:** SQLite BLOB remains source of truth. Zvec is the fast search index. If `--zvec` is removed, search falls back to brute-force using SQLite BLOBs — zero data loss.
+
+### ZvecStore (src/vector_store_zvec.ts)
+
+- Wraps `@moltmind/zvec-native` (optional dependency, not yet published).
+- Uses `createRequire(import.meta.url)` for ESM/CJS interop with the napi module.
+- Tracks dirty state internally, auto-rebuilds index before search.
+- `migrateExistingEmbeddings(store)` — reads all SQLite BLOBs, bulk-inserts into Zvec index. Runs once when `zvec.idx` doesn't exist yet.
+
+### --zvec Flag (src/config.ts)
+
+- `isZvecEnabled()` reads `process.argv` once and caches the result. Same pattern as `isMoltbookEnabled()`.
+- In `src/index.ts` `main()`, after `initMetrics()`:
+  1. If `--zvec` is set, validate Pro license.
+  2. If license is invalid, log warning and fall back to brute-force.
+  3. If license is valid, dynamically import `ZvecStore`, create/migrate the index, call `initVectorStore()`.
+  4. If native module is unavailable, log fallback and continue with brute-force.
+
+### --upgrade Flag
+
+- When `npx moltmind --upgrade` is run, reads `~/.moltmind/instance_id` and opens the browser to `https://license.moltmind.com/checkout?id=<instance_id>`.
+- Cross-platform: `open` (macOS), `start` (Windows), `xdg-open` (Linux).
+- Exits immediately after opening the browser — does not start the MCP server.
+
+### License Key Generation (scripts/generate-license.ts)
+
+- NOT published to npm (excluded by `"files"` in package.json).
+- Reads `~/.moltmind/license-private.pem`, signs the provided `instance_id`, outputs `MMPRO-{prefix}-{sig}`.
+- Usage: `tsx scripts/generate-license.ts <instance_id>`
+
+### Version Strings
+
+- Version is hardcoded in **4 places** — update ALL when bumping:
+  1. `package.json` → `"version"`
+  2. `src/index.ts` → McpServer constructor `version`
+  3. `src/tools/mm_status.ts` → response `version` field
+  4. `tests/tools.test.ts` → version assertion
 
 ## Commands
 
@@ -300,6 +376,8 @@ CREATE TABLE IF NOT EXISTS token_estimates (
 - Pro/Team tier (future): encrypted at rest with user-provided key before cloud sync
 - Never log memory content (titles or bodies) to diagnostics — only metadata
 - `.moltmind/` directories should be added to `.gitignore` to prevent accidental commits of memory databases
+- **RSA private key** (`~/.moltmind/license-private.pem`) must NEVER be committed, published, or shared. Only the public key is embedded in source.
+- **License keys** are machine-locked — a key signed for one `instance_id` won't verify against another machine's `instance_id`
 
 ## What NOT to Do
 
@@ -313,3 +391,6 @@ CREATE TABLE IF NOT EXISTS token_estimates (
 - Do not return archived memories from `getAllMemories()` by default
 - Do not expose raw stack traces to agents — always return `{ success: false, message }` format
 - Do not hard-delete any data — soft-delete only
+- Do not commit or publish `~/.moltmind/license-private.pem` — it is the signing key for Pro licenses
+- Do not add `@moltmind/zvec-native` as a hard dependency — it is an optional dynamic import behind `--zvec`
+- Do not bypass free tier limits in `mm_store` — always call `checkStoreLimits()` before insert
