@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-MoltMind is a TypeScript MCP (Model Context Protocol) server that provides persistent semantic memory for AI agents. Agents install it via `npx -y moltmind` and get 11 tools for storing, recalling, diagnosing, and handing off context across sessions. It runs 100% locally — no API keys, no cloud, no accounts needed for the free tier.
+MoltMind is a TypeScript MCP (Model Context Protocol) server that provides persistent semantic memory and session continuity for AI agents. Agents install it via `npx -y moltmind` and get 14 tools for storing, recalling, diagnosing, session tracking, and handing off context across sessions. It runs 100% locally — no API keys, no cloud, no accounts needed for the free tier.
 
 See @README.md for user-facing documentation and @package.json for available scripts.
 
@@ -60,7 +60,7 @@ src/
 ├── db.ts             # SQLite schema, migrations, all database CRUD functions. Singleton pattern.
 ├── embeddings.ts     # Model loading, embedding generation, cosine similarity, semantic search.
 ├── diagnostics.ts    # withDiagnostics() wrapper, health score, diagnostics table, feedback table.
-├── metrics.ts        # Adoption metrics: instance_id, session tracking, tool usage counters, getFullMetrics().
+├── metrics.ts        # Adoption metrics: instance_id, session lifecycle, tool usage counters, getFullMetrics().
 ├── types.ts          # Shared TypeScript interfaces and types.
 └── tools/            # One file per MCP tool. Each exports a handler function.
     ├── mm_store.ts
@@ -72,6 +72,9 @@ src/
     ├── mm_init.ts
     ├── mm_handoff_create.ts
     ├── mm_handoff_load.ts
+    ├── mm_session_save.ts
+    ├── mm_session_resume.ts
+    ├── mm_session_history.ts
     ├── mm_feedback.ts
     └── mm_metrics.ts
 tests/
@@ -85,7 +88,7 @@ tests/
     └── ci.yml        # Lint + test on push/PR to main
 ```
 
-## MCP Tools (11 total)
+## MCP Tools (14 total)
 
 | Tool | Purpose |
 |------|---------|
@@ -98,6 +101,9 @@ tests/
 | `mm_init` | Create a project-local vault in `.moltmind/` of current directory |
 | `mm_handoff_create` | Create a structured handoff document for agent-to-agent transitions |
 | `mm_handoff_load` | Load the most recent handoff to resume context |
+| `mm_session_save` | Save session summary, actions, outcomes, and where we left off. Marks session paused or completed |
+| `mm_session_resume` | Load recent sessions + latest handoff, return formatted summary for context recovery |
+| `mm_session_history` | List past sessions with filtering (status, date range, limit) and per-session tool call stats |
 | `mm_feedback` | Submit feedback (bug, feature_request, friction) about a specific tool |
 | `mm_metrics` | View real-time adoption metrics: sessions, tool usage, error rates, trends |
 
@@ -117,16 +123,18 @@ tests/
 - On database open, read current `schema_version` (default '0' if table doesn't exist)
 - Run migrations sequentially: `migrate_v1()`, `migrate_v2()`, etc. — each wrapped in a transaction
 - Every migration bumps `schema_version` after success
-- v1 = current schema (memories, handoffs, memories_fts with triggers)
-- v2 = add diagnostics + feedback + metrics tables (Phase 4)
-- This ensures existing users on v0.1.x don't break when upgrading to v0.2.x
+- v1 = memories, handoffs, memories_fts with triggers
+- v2 = diagnostics + feedback + metrics tables
+- v3 = moltbook_auth table
+- v4 = sessions table + session_id column on diagnostics
+- This ensures existing users on older versions don't break when upgrading
 
-### Tables (v2 schema)
+### Tables (v4 schema)
 
 **memories** — core memory storage (v1)
 **handoffs** — agent-to-agent context transfer (v1)
 **memories_fts** — FTS5 virtual table on title+content (v1)
-**diagnostics** — tool execution logs (v2)
+**diagnostics** — tool execution logs with session tracking (v2, updated v4)
 ```sql
 CREATE TABLE IF NOT EXISTS diagnostics (
   id TEXT PRIMARY KEY,
@@ -134,6 +142,7 @@ CREATE TABLE IF NOT EXISTS diagnostics (
   success INTEGER NOT NULL,
   latency_ms REAL NOT NULL,
   error_message TEXT,
+  session_id TEXT,
   created_at TEXT NOT NULL
 );
 ```
@@ -153,6 +162,21 @@ CREATE TABLE IF NOT EXISTS metrics (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL,
   updated_at TEXT NOT NULL
+);
+```
+**sessions** — session lifecycle tracking (v4)
+```sql
+CREATE TABLE IF NOT EXISTS sessions (
+  id TEXT PRIMARY KEY,
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused','completed')),
+  summary TEXT,
+  goal TEXT,
+  actions_taken TEXT NOT NULL DEFAULT '[]',
+  outcomes TEXT NOT NULL DEFAULT '[]',
+  where_left_off TEXT,
+  started_at TEXT NOT NULL,
+  ended_at TEXT,
+  metadata TEXT NOT NULL DEFAULT '{}'
 );
 ```
 
@@ -207,6 +231,16 @@ export async function withDiagnostics(
 - Increment `total_tool_calls` and `tool_calls_by_name[toolName]` inside `withDiagnostics`.
 - All metrics are LOCAL ONLY in free tier — nothing leaves the machine.
 - `mm_metrics` tool returns a formatted dashboard of all adoption data.
+
+### Session Lifecycle (src/metrics.ts)
+
+- **Startup:** `initMetrics()` auto-creates an "active" session in the `sessions` table and stores the session ID in `currentSessionId`.
+- **During session:** `withDiagnostics()` reads `getCurrentSessionId()` and passes it to `insertDiagnostic()` so all tool calls are tagged with the session.
+- **Shutdown:** `shutdown()` calls `pauseCurrentSession()` which marks the active session as "paused" with an `ended_at` timestamp before closing the DB.
+- **Handoff linking:** `mm_handoff_create` uses `getCurrentSessionId()` instead of a random UUID, linking handoffs to the session that created them.
+- **Session save:** Agents can call `mm_session_save` to attach summary, actions_taken, outcomes, and where_left_off to the current session.
+- **Session resume:** `mm_session_resume` loads recent sessions + latest handoff so agents can restore context after a restart.
+- **Session history:** `mm_session_history` lists past sessions with per-session tool call stats from the diagnostics table.
 
 ## Commands
 
