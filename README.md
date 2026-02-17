@@ -6,17 +6,19 @@ MoltMind is an [MCP](https://modelcontextprotocol.io) server that gives your AI 
 
 ## Why MoltMind?
 
-Every time your AI agent starts a new conversation, it forgets everything. Re-exploring your codebase costs ~8,000 tokens per session — about **$0.024** on Claude Sonnet. That adds up fast:
+Every time your AI agent starts a new conversation, it forgets everything. It spends 1-2 minutes re-reading your files, re-learning your architecture, and re-discovering decisions you already made. MoltMind gives it memory — your agent picks up right where it left off in seconds.
 
-| Project size | Without MoltMind | With MoltMind | You save |
-|-------------|-----------------|---------------|----------|
-| 5 sessions | $0.12 | $0.02 | **$0.10** |
-| 20 sessions | $0.48 | $0.05 | **$0.43** |
-| Daily use (1 year) | $8.76 | $0.87 | **$7.89** |
+| | Without MoltMind | With MoltMind |
+|--|-----------------|---------------|
+| **Model used** | Claude Opus 4.6 ($5/$25 per 1M tokens) | |
+| **Time per session** | 1-2 min re-exploring | Seconds to resume |
+| **Cost per session** | ~$0.09 | ~$0.009 |
+| **20 sessions** | $1.80 | $0.18 |
+| **Daily use (1 year)** | $32.85 | $3.29 |
+| **Time saved (1 year)** | — | **~6 hours** |
+| **Money saved (1 year)** | — | **~$30** |
 
-MoltMind restores your agent's context in ~325 tokens ($0.001) instead of re-exploring from scratch. Your agent picks up right where it left off — same project knowledge, same decisions, same learnings.
-
-> Dollar estimates based on Claude Sonnet 4.5 input pricing ($3/1M tokens). Actual savings vary by model and usage.
+> Assumes ~8,000 input + ~2,000 output tokens per cold start, ~825 input + ~200 output per resume. Savings scale with usage — power users save more.
 
 ## Quick Start
 
