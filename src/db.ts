@@ -820,19 +820,29 @@ export function updateSessionHeartbeat(id: string, pid: number): void {
 
 export function markStaleSessions(staleCutoffMs: number = 60000): number {
   const database = getDb();
+  const now = new Date().toISOString();
   const cutoff = new Date(Date.now() - staleCutoffMs).toISOString();
-  const result = database.prepare(
-    "UPDATE sessions SET status = 'paused', ended_at = ? WHERE status = 'active' AND last_heartbeat IS NOT NULL AND last_heartbeat < ?"
-  ).run(new Date().toISOString(), cutoff);
 
-  // Release claims held by stale sessions
-  if (result.changes > 0) {
+  // Mark sessions with stale heartbeats
+  const staleHeartbeat = database.prepare(
+    "UPDATE sessions SET status = 'paused', ended_at = ? WHERE status = 'active' AND last_heartbeat IS NOT NULL AND last_heartbeat < ?"
+  ).run(now, cutoff);
+
+  // Mark sessions with no heartbeat and no PID (pre-v7 leftovers or orphaned sessions)
+  const nullHeartbeat = database.prepare(
+    "UPDATE sessions SET status = 'paused', ended_at = ? WHERE status = 'active' AND last_heartbeat IS NULL AND pid IS NULL"
+  ).run(now);
+
+  const totalChanges = staleHeartbeat.changes + nullHeartbeat.changes;
+
+  // Release claims held by newly paused stale sessions
+  if (totalChanges > 0) {
     database.prepare(
-      "DELETE FROM session_claims WHERE session_id IN (SELECT id FROM sessions WHERE status = 'paused' AND last_heartbeat IS NOT NULL AND last_heartbeat < ?)"
+      "DELETE FROM session_claims WHERE session_id IN (SELECT id FROM sessions WHERE status = 'paused' AND ((last_heartbeat IS NOT NULL AND last_heartbeat < ?) OR (last_heartbeat IS NULL AND pid IS NULL)))"
     ).run(cutoff);
   }
 
-  return result.changes;
+  return totalChanges;
 }
 
 export function getActiveSessions(): Session[] {
