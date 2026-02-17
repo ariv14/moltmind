@@ -367,7 +367,7 @@ async function main(): Promise<void> {
 
     const instanceId = readFileSync(instanceIdPath, "utf-8").trim();
     const activationToken = randomUUID();
-    const checkoutUrl = `https://aidigitalcrew.com/checkout?id=${encodeURIComponent(instanceId)}&token=${encodeURIComponent(activationToken)}`;
+    const checkoutUrl = `https://moltmind-license.arimatch1.workers.dev/checkout?id=${encodeURIComponent(instanceId)}&token=${encodeURIComponent(activationToken)}`;
 
     console.error("Opening checkout page...");
     const { exec } = await import("node:child_process");
@@ -375,7 +375,7 @@ async function main(): Promise<void> {
     exec(`${cmd} "${checkoutUrl}"`);
 
     console.error("Waiting for payment confirmation...");
-    const pollUrl = `https://aidigitalcrew.com/api/license/${activationToken}`;
+    const pollUrl = `https://moltmind-license.arimatch1.workers.dev/api/license/${activationToken}`;
     const pollInterval = 3000;
     const maxWait = 5 * 60 * 1000; // 5 minutes
     const start = Date.now();

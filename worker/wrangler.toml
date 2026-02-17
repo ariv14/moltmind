@@ -1,0 +1,25 @@
+name = "moltmind-license"
+main = "src/index.ts"
+compatibility_date = "2024-12-30"
+
+# Custom domain routes (uncomment when aidigitalcrew.com is on Cloudflare):
+# routes = [
+#   { pattern = "aidigitalcrew.com/checkout*", zone_name = "aidigitalcrew.com" },
+#   { pattern = "aidigitalcrew.com/api/*", zone_name = "aidigitalcrew.com" }
+# ]
+
+# For now, uses workers.dev subdomain automatically
+
+[[kv_namespaces]]
+binding = "LICENSES"
+id = "aa2e24d275344aeea59fc31f622f6d5d"
+
+[[kv_namespaces]]
+binding = "ACTIVE_LICENSES"
+id = "1c1f9380a6374224920c2c18b1f8af20"
+
+# Secrets (set via `wrangler secret put`):
+# - RSA_PRIVATE_KEY: PEM-encoded RSA private key for signing licenses
+# - POLAR_WEBHOOK_SECRET: Webhook secret from Polar dashboard (may be prefixed with "whsec_")
+# - POLAR_ACCESS_TOKEN: Polar API access token (needs checkouts:write scope)
+# - POLAR_PRODUCT_ID: Polar product ID for MoltMind Pro
