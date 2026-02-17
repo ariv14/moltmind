@@ -144,6 +144,20 @@ function migrateV5(database: Database.Database): void {
   `);
 }
 
+function migrateV6(database: Database.Database): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS moltbook_posts (
+      id TEXT PRIMARY KEY,
+      title_hash TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      submolt TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_moltbook_posts_content ON moltbook_posts(content_hash);
+    CREATE INDEX IF NOT EXISTS idx_moltbook_posts_title ON moltbook_posts(title_hash);
+  `);
+}
+
 function migrateV4(database: Database.Database): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
@@ -178,6 +192,7 @@ const migrations: Array<(database: Database.Database) => void> = [
   migrateV3,
   migrateV4,
   migrateV5,
+  migrateV6,
 ];
 
 function migrate(database: Database.Database): void {
@@ -751,4 +766,38 @@ export function initProjectVault(activeSessionId?: string | null): string {
   }
 
   return PROJECT_DB_PATH;
+}
+
+// --- Moltbook post dedup ---
+
+function hashString(input: string): string {
+  return crypto.createHash("sha256").update(input.trim().toLowerCase()).digest("hex");
+}
+
+export function isDuplicatePost(titleHash: string, contentHash: string, submolt: string | null): boolean {
+  const database = getGlobalDb();
+  const row = database.prepare(
+    "SELECT id FROM moltbook_posts WHERE (title_hash = ? OR content_hash = ?) AND (submolt IS ? OR submolt = ?)"
+  ).get(titleHash, contentHash, submolt, submolt) as Record<string, unknown> | undefined;
+  return !!row;
+}
+
+export function recordPost(id: string, title: string, content: string, submolt: string | null): void {
+  const database = getGlobalDb();
+  database.prepare(
+    "INSERT OR IGNORE INTO moltbook_posts (id, title_hash, content_hash, submolt, created_at) VALUES (?, ?, ?, ?, ?)"
+  ).run(id, hashString(title), hashString(content), submolt, new Date().toISOString());
+}
+
+export function hashPostTitle(title: string): string {
+  return hashString(title);
+}
+
+export function hashPostContent(content: string): string {
+  return hashString(content);
+}
+
+export function clearMoltbookPosts(): void {
+  const database = getGlobalDb();
+  database.prepare("DELETE FROM moltbook_posts").run();
 }

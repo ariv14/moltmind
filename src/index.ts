@@ -379,6 +379,24 @@ async function main(): Promise<void> {
 
   if (isMoltbookEnabled()) {
     await registerMoltbookTools();
+
+    // Auto-login: validate stored token silently on startup
+    try {
+      const { getStoredToken, moltbookFetch, clearToken, getStoredUsername } = await import("./moltbook_client.js");
+      const token = getStoredToken();
+      if (token) {
+        const res = await moltbookFetch<{ name: string }>("/agents/me", { method: "GET", token, timeoutMs: 5000 });
+        if (res.ok && res.data) {
+          const name = res.data.name ?? getStoredUsername() ?? "unknown";
+          console.error(`Moltbook: authenticated as ${name}`);
+        } else {
+          console.error("Moltbook: stored token invalid, clearing");
+          clearToken();
+        }
+      }
+    } catch {
+      // Non-blocking — don't prevent server startup
+    }
   }
 
   const mode = getToolMode();

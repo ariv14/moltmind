@@ -8,7 +8,7 @@ import { handleMbComment } from "../src/tools/mb_comment.js";
 import { handleMbVote } from "../src/tools/mb_vote.js";
 import { handleMbSocial } from "../src/tools/mb_social.js";
 import { handleMbSubmolt } from "../src/tools/mb_submolt.js";
-import { deleteMoltbookAuth, setMoltbookAuth } from "../src/db.js";
+import { deleteMoltbookAuth, setMoltbookAuth, clearMoltbookPosts } from "../src/db.js";
 
 function createMockFetch(handler: (url: string, init?: RequestInit) => { status: number; body: unknown }) {
   return async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
@@ -102,10 +102,14 @@ describe("mb_auth", () => {
 });
 
 describe("mb_post", () => {
-  beforeEach(() => setupAuth());
+  beforeEach(() => {
+    setupAuth();
+    clearMoltbookPosts();
+  });
   afterEach(() => {
     _setMockFetch(null);
     clearAuth();
+    clearMoltbookPosts();
   });
 
   it("create post succeeds", async () => {
