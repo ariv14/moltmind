@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-MoltMind is a TypeScript MCP (Model Context Protocol) server that provides persistent semantic memory and session continuity for AI agents. Agents install it via `npx -y moltmind` and get 14 tools for storing, recalling, diagnosing, session tracking, and handing off context across sessions. It runs 100% locally — no API keys, no cloud, no accounts needed for the free tier.
+MoltMind is a TypeScript MCP (Model Context Protocol) server that provides persistent semantic memory and session continuity for AI agents. Agents install it via `npx -y moltmind` and get 14 core tools (21 with `--moltbook`) for storing, recalling, diagnosing, session tracking, and handing off context across sessions. It runs 100% locally — no API keys, no cloud, no accounts needed for the free tier.
 
 See @README.md for user-facing documentation and @package.json for available scripts.
 
@@ -57,10 +57,12 @@ See @README.md for user-facing documentation and @package.json for available scr
 ```
 src/
 ├── index.ts          # MCP server setup, tool registration, shutdown handlers. Entry point with shebang.
+├── config.ts         # --moltbook flag parsing, isToolEnabled(), getToolMode().
 ├── db.ts             # SQLite schema, migrations, all database CRUD functions. Singleton pattern.
 ├── embeddings.ts     # Model loading, embedding generation, cosine similarity, semantic search.
-├── diagnostics.ts    # withDiagnostics() wrapper, health score, diagnostics table, feedback table.
+├── diagnostics.ts    # withDiagnostics() wrapper, health score, diagnostics table, feedback table, token tracking.
 ├── metrics.ts        # Adoption metrics: instance_id, session lifecycle, tool usage counters, getFullMetrics().
+├── token_estimator.ts # Token cost estimation heuristics and savings tracking.
 ├── types.ts          # Shared TypeScript interfaces and types.
 └── tools/            # One file per MCP tool. Each exports a handler function.
     ├── mm_store.ts
@@ -82,13 +84,14 @@ tests/
 ├── embeddings.test.ts
 ├── diagnostics.test.ts
 ├── metrics.test.ts
+├── token_estimator.test.ts
 └── tools.test.ts
 .github/
 └── workflows/
     └── ci.yml        # Lint + test on push/PR to main
 ```
 
-## MCP Tools (14 total)
+## MCP Tools (14 core + 7 moltbook opt-in)
 
 | Tool | Purpose |
 |------|---------|
@@ -105,7 +108,7 @@ tests/
 | `mm_session_resume` | Load recent sessions + latest handoff, return formatted summary for context recovery |
 | `mm_session_history` | List past sessions with filtering (status, date range, limit) and per-session tool call stats |
 | `mm_feedback` | Submit feedback (bug, feature_request, friction) about a specific tool |
-| `mm_metrics` | View real-time adoption metrics: sessions, tool usage, error rates, trends |
+| `mm_metrics` | View real-time adoption metrics: sessions, tool usage, error rates, token savings |
 
 ## Database Conventions
 
@@ -127,9 +130,10 @@ tests/
 - v2 = diagnostics + feedback + metrics tables
 - v3 = moltbook_auth table
 - v4 = sessions table + session_id column on diagnostics
+- v5 = token_estimates table
 - This ensures existing users on older versions don't break when upgrading
 
-### Tables (v4 schema)
+### Tables (v5 schema)
 
 **memories** — core memory storage (v1)
 **handoffs** — agent-to-agent context transfer (v1)
@@ -180,6 +184,18 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 ```
 
+**token_estimates** — per-session token cost tracking (v5)
+```sql
+CREATE TABLE IF NOT EXISTS token_estimates (
+  session_id TEXT PRIMARY KEY,
+  overhead_tokens INTEGER NOT NULL DEFAULT 0,
+  tool_response_tokens INTEGER NOT NULL DEFAULT 0,
+  cold_start_avoided INTEGER NOT NULL DEFAULT 0,
+  net_savings INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL
+);
+```
+
 ### Query Behavior
 
 - `getAllMemories()` MUST exclude `tier = 'archived'` by default. Add an `includeArchived` boolean parameter to override.
@@ -199,27 +215,10 @@ CREATE TABLE IF NOT EXISTS sessions (
 ## Diagnostics & Metrics Conventions
 
 ### withDiagnostics wrapper (src/diagnostics.ts)
-```typescript
-export async function withDiagnostics(
-  toolName: string,
-  handler: () => Promise<ToolResult>
-): Promise<ToolResult> {
-  const start = performance.now();
-  try {
-    const result = await handler();
-    logDiagnostic(toolName, true, performance.now() - start, null);
-    return result;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    logDiagnostic(toolName, false, performance.now() - start, msg);
-    return {
-      content: [{ type: "text", text: JSON.stringify({ success: false, message: msg }) }],
-    };
-  }
-}
-```
 
 - Every tool handler in `src/index.ts` MUST use this wrapper. No exceptions.
+- After each tool call, `withDiagnostics` logs diagnostics AND calls `trackTokens()` to estimate response tokens and update the `token_estimates` table for the current session.
+- `trackTokens()` marks `mm_session_resume` and `mm_handoff_load` calls as cold-start avoidances.
 - `logDiagnostic()` inserts into the `diagnostics` table — never log memory content, only tool name, success/fail, latency, and error message.
 - `getHealthScore()` returns 0.0-1.0 based on success rate in the last 100 operations.
 
@@ -231,6 +230,23 @@ export async function withDiagnostics(
 - Increment `total_tool_calls` and `tool_calls_by_name[toolName]` inside `withDiagnostics`.
 - All metrics are LOCAL ONLY in free tier — nothing leaves the machine.
 - `mm_metrics` tool returns a formatted dashboard of all adoption data.
+
+### Tool Mode & --moltbook Flag (src/config.ts)
+
+- By default, only 14 core `mm_*` tools are registered (~500 tokens overhead).
+- With `--moltbook` flag, 7 additional `mb_*` social tools are registered (~1,000 tokens total overhead).
+- `isMoltbookEnabled()` reads `process.argv` once and caches the result.
+- `isToolEnabled(toolName)` returns `false` for `mb_*` tools unless `--moltbook` is set.
+- In `src/index.ts`, moltbook tool imports are dynamic (`await import(...)`) inside `registerMoltbookTools()` — only loaded when `--moltbook` is passed.
+
+### Token Cost Estimation (src/token_estimator.ts)
+
+- Heuristic: ~4 characters per token for JSON responses.
+- Tool overhead: ~500 tokens (default) or ~1,000 tokens (with `--moltbook`).
+- Cold-start avoidance: each `mm_session_resume`/`mm_handoff_load` saves ~7,675 tokens vs re-exploring from scratch (~8,000 token cold start vs ~325 token resume).
+- `upsertTokenEstimate()` accumulates response tokens and cold-start avoidances per session in the `token_estimates` table.
+- `getAggregateTokenSavings()` returns a `TokenSavingsReport` with sessions tracked, overhead, response tokens, cold starts avoided, net savings, and savings percent.
+- `mm_metrics` includes a `token_savings` section in its dashboard output.
 
 ### Session Lifecycle (src/metrics.ts)
 
@@ -249,6 +265,7 @@ export async function withDiagnostics(
 | `npm run build` | Compile TypeScript to `dist/` |
 | `npm run dev` | Watch mode with `tsx watch src/index.ts` |
 | `npm test` | Run tests with Node's built-in test runner |
+| `npm run benchmark` | Run token cost benchmark (no LLM calls) |
 | `npm run lint` | Run TypeScript type checking (`tsc --noEmit`) |
 | `npm run clean` | Remove `dist/` directory |
 
