@@ -710,7 +710,7 @@ export function getSessionDiagnostics(sessionId: string): {
   return { total_calls: totalCalls, errors, by_tool: byTool };
 }
 
-export function initProjectVault(): string {
+export function initProjectVault(activeSessionId?: string | null): string {
   ensureDir(PROJECT_DIR);
 
   // Close existing connection and reopen with project DB
@@ -718,6 +718,14 @@ export function initProjectVault(): string {
   db = new Database(PROJECT_DB_PATH);
   db.pragma("journal_mode = WAL");
   migrate(db);
+
+  // Carry over the active session so mm_session_save still works
+  if (activeSessionId) {
+    const existing = db.prepare("SELECT id FROM sessions WHERE id = ?").get(activeSessionId) as Record<string, unknown> | undefined;
+    if (!existing) {
+      db.prepare("INSERT INTO sessions (id, status, started_at) VALUES (?, 'active', ?)").run(activeSessionId, new Date().toISOString());
+    }
+  }
 
   return PROJECT_DB_PATH;
 }
