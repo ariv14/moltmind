@@ -6,15 +6,24 @@ MoltMind is an [MCP](https://modelcontextprotocol.io) server that gives your AI 
 
 ## Quick Start
 
-**Claude Code:**
+Each setup below shows two options: **default** (14 memory + session tools) and **with moltbook** (adds 7 social tools for [moltbook.com](https://moltbook.com)).
+
+### Claude Code
+
 ```bash
-npx -y moltmind            # downloads and verifies
+# Default (memory + sessions)
 claude mcp add moltmind -- npx -y moltmind
-# Restart Claude Code, then run /mcp to verify
+
+# With moltbook social
+claude mcp add moltmind -- npx -y moltmind --moltbook
 ```
 
-**Cursor / Windsurf / Cline:**
-Add to your MCP config:
+Restart Claude Code, then run `/mcp` to verify.
+
+### Cursor
+
+Add to `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project):
+
 ```json
 {
   "mcpServers": {
@@ -26,28 +35,102 @@ Add to your MCP config:
 }
 ```
 
-## Moltbook Social (opt-in)
+With moltbook: `"args": ["-y", "moltmind", "--moltbook"]`
 
-MoltMind includes optional social tools for [moltbook.com](https://moltbook.com) — a social network for AI agents. These are **disabled by default** to keep token overhead low. To enable them, add the `--moltbook` flag:
+### Windsurf
 
-**Claude Code:**
-```bash
-claude mcp add moltmind -- npx -y moltmind --moltbook
-```
+Add to `~/.codeium/windsurf/mcp_config.json`:
 
-**Cursor / Windsurf / Cline:**
 ```json
 {
   "mcpServers": {
     "moltmind": {
       "command": "npx",
-      "args": ["-y", "moltmind", "--moltbook"]
+      "args": ["-y", "moltmind"]
     }
   }
 }
 ```
 
-This adds 7 social tools (`mb_auth`, `mb_post`, `mb_feed`, `mb_comment`, `mb_vote`, `mb_social`, `mb_submolt`) for posting, commenting, voting, and following on moltbook.com.
+With moltbook: `"args": ["-y", "moltmind", "--moltbook"]`
+
+### VS Code (GitHub Copilot)
+
+Add to `.vscode/mcp.json` in your project:
+
+```json
+{
+  "servers": {
+    "moltmind": {
+      "command": "npx",
+      "args": ["-y", "moltmind"]
+    }
+  }
+}
+```
+
+With moltbook: `"args": ["-y", "moltmind", "--moltbook"]`
+
+Or add to VS Code `settings.json` under `"mcp" > "servers"` with the same format.
+
+### Cline
+
+Add to Cline's MCP settings (Settings > MCP Servers > Edit Config):
+
+```json
+{
+  "mcpServers": {
+    "moltmind": {
+      "command": "npx",
+      "args": ["-y", "moltmind"]
+    }
+  }
+}
+```
+
+With moltbook: `"args": ["-y", "moltmind", "--moltbook"]`
+
+### OpenAI Codex CLI
+
+```bash
+# Default
+codex --mcp-config '{"mcpServers":{"moltmind":{"command":"npx","args":["-y","moltmind"]}}}'
+
+# With moltbook
+codex --mcp-config '{"mcpServers":{"moltmind":{"command":"npx","args":["-y","moltmind","--moltbook"]}}}'
+```
+
+Or add to `~/.codex/config.json`:
+
+```json
+{
+  "mcpServers": {
+    "moltmind": {
+      "command": "npx",
+      "args": ["-y", "moltmind"]
+    }
+  }
+}
+```
+
+With moltbook: `"args": ["-y", "moltmind", "--moltbook"]`
+
+### Any MCP-compatible client
+
+MoltMind works with any client that supports the [Model Context Protocol](https://modelcontextprotocol.io). Point it at `npx -y moltmind` as a STDIO server:
+
+```json
+{
+  "mcpServers": {
+    "moltmind": {
+      "command": "npx",
+      "args": ["-y", "moltmind"]
+    }
+  }
+}
+```
+
+With moltbook: `"args": ["-y", "moltmind", "--moltbook"]`
 
 ## Tools
 
