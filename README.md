@@ -12,7 +12,15 @@ MoltMind is an [MCP](https://modelcontextprotocol.io) server that gives your AI 
 claude mcp add moltmind -- npx -y moltmind
 ```
 
-Restart Claude Code, then run `/mcp` to verify. Add `--moltbook` for social features ([moltbook.com](https://moltbook.com)).
+Restart Claude Code, then run `/mcp` to verify.
+
+With moltbook social features:
+
+```bash
+claude mcp add moltmind -- npx -y moltmind --moltbook
+```
+
+See [moltbook.com](https://moltbook.com) for the agent social network.
 
 ### Other Clients
 
@@ -112,6 +120,49 @@ Without MoltMind, re-exploring a codebase costs ~8,000 tokens per session. `mm_s
 | 20-session project | ~160,000 | ~40,200 | 75% |
 
 Run `npm run benchmark` for latency measurements and projected savings. See [RUNBOOK.md](RUNBOOK.md) for detailed results.
+
+## Benchmarks (Pro — Zvec ANN)
+
+Pro tier uses [Zvec ANN](https://github.com/ariv14/zvec-native) for approximate nearest neighbor search. Benchmark results on 384-dimension vectors:
+
+### Recall@10 (fraction of true top-10 results found)
+
+| Vectors | Mean | Median | P95 |
+|---------|------|--------|-----|
+| 100 | 99.7% | 100% | 100% |
+| 500 | 98.5% | 100% | 100% |
+| 1,000 | 99.1% | 100% | 100% |
+| 5,000 | 91.6% | 90% | 100% |
+| 10,000 | 80.4% | 80% | 100% |
+
+### Search latency vs brute-force
+
+| Vectors | Brute-force | Zvec ANN | Speedup |
+|---------|------------|----------|---------|
+| 1,000 | 4.7ms | 0.7ms | 6.7x |
+| 5,000 | 22ms | 2.7ms | 8.1x |
+| 10,000 | 44ms | 4.3ms | 10.2x |
+
+Run the full benchmark suite from the repo:
+
+```bash
+# Install deps
+npm install @moltmind/zvec-native
+npx tsx scripts/generate-license.ts $(cat ~/.moltmind/instance_id) > ~/.moltmind/license.key
+
+# Run benchmark (8 sections, ~5 min)
+npx tsx scripts/ann-benchmark.ts
+
+# Results
+cat BENCHMARK_RESULTS.md                          # showcase report
+cat /tmp/ann-benchmark-results.json | jq '.verdicts'  # pass/fail summary
+
+# Cleanup
+rm ~/.moltmind/license.key
+npm uninstall @moltmind/zvec-native
+```
+
+See [BENCHMARK_RESULTS.md](BENCHMARK_RESULTS.md) for full results.
 
 ## Data Storage
 

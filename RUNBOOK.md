@@ -10,8 +10,12 @@ Operational guide — setup, benchmarks, workflows, and troubleshooting.
 # Claude Code (primary)
 claude mcp add moltmind -- npx -y moltmind
 
+# With moltbook social features
+claude mcp add moltmind -- npx -y moltmind --moltbook
+
 # Any other MCP client — add to config:
 # { "mcpServers": { "moltmind": { "command": "npx", "args": ["-y", "moltmind"] } } }
+# With moltbook: "args": ["-y", "moltmind", "--moltbook"]
 ```
 
 See [README.md](README.md) for per-client config paths.
@@ -120,6 +124,83 @@ Run `npm run benchmark` from the MoltMind repo for your machine's numbers. Typic
 | 20-session project | ~160,000 tokens | ~40,200 tokens | 75% |
 
 Tool description overhead (~500 tokens/request) pays for itself after one session resume. With prompt caching, overhead drops to ~50 tokens.
+
+### ANN benchmark (Pro tier — Zvec)
+
+Pro tier uses Zvec ANN for approximate nearest neighbor search instead of brute-force. The benchmark suite tests recall, latency, scalability, correctness, and throughput.
+
+#### Quick run
+
+```bash
+# Install zvec-native and generate a Pro license
+npm install @moltmind/zvec-native
+npx tsx scripts/generate-license.ts $(cat ~/.moltmind/instance_id) > ~/.moltmind/license.key
+
+# Run the full benchmark (~5 min)
+npx tsx scripts/ann-benchmark.ts
+
+# Cleanup
+rm ~/.moltmind/license.key
+npm uninstall @moltmind/zvec-native
+```
+
+#### What it tests (8 sections)
+
+| Section | What it measures |
+|---------|-----------------|
+| Recall@K | Fraction of true top-K results the ANN finds (K=1,5,10,25,50 at 100–10K vectors) |
+| Distribution sensitivity | Recall on uniform, clustered (20 centers), and adversarial (near-identical) vectors |
+| Warm vs cold latency | First search after buildIndex vs subsequent searches (p50/p95/p99) |
+| Scalability curves | Insert throughput, build time, search latency, recall, RSS at 8 scale points |
+| Sustained throughput | 1,000 queries back-to-back + mixed workload with interleaved inserts |
+| Memory efficiency | Bytes per vector vs theoretical minimum (1,536 bytes for 384 dims) |
+| Correctness under mutation | Delete 1,000 vectors, verify none leak into results, reinsert 500, check recall |
+| Rebuild stability | 10 consecutive buildIndex calls — determinism and build time variance |
+
+#### Typical results (384-dim, Intel i9)
+
+**Recall@10:**
+
+| Vectors | Mean | Median |
+|---------|------|--------|
+| 100 | 99.7% | 100% |
+| 1,000 | 99.1% | 100% |
+| 5,000 | 91.6% | 90% |
+| 10,000 | 80.4% | 80% |
+
+**Search latency (warm):**
+
+| Vectors | p50 | p95 |
+|---------|-----|-----|
+| 500 | 0.4ms | 0.6ms |
+| 1,000 | 0.7ms | 1.0ms |
+| 5,000 | 2.7ms | 3.2ms |
+| 10,000 | 4.3ms | 4.8ms |
+
+**Throughput:** 330+ queries/sec sustained at 5,000 vectors, zero latency spikes.
+
+**Correctness:** Zero deleted IDs in results. Deterministic results across rebuilds (CV < 0.1).
+
+#### Output files
+
+| File | Purpose |
+|------|---------|
+| Terminal (stderr) | Formatted ASCII tables as benchmark runs |
+| `BENCHMARK_RESULTS.md` | Polished showcase report (auto-generated in project root) |
+| `/tmp/ann-benchmark-results.json` | Machine-readable results for programmatic analysis |
+
+#### Pass/fail verdicts
+
+The benchmark exits with code 1 if any verdict fails:
+
+| Criterion | Threshold |
+|-----------|-----------|
+| Recall@10 at ≤1,000 vectors | ≥ 90% |
+| Recall@10 at 10,000 vectors | ≥ 70% |
+| Throughput at 5,000 vectors | ≥ 200 qps |
+| No deleted IDs in results | 0 leaked |
+| Build determinism | CV < 0.3 |
+| Clustered recall vs uniform | Within 10pp |
 
 ---
 
@@ -250,3 +331,19 @@ claude mcp remove moltmind
 claude mcp add moltmind -- npx -y moltmind
 ```
 Restart Claude Code.
+
+### Reinstalling with different options
+
+To switch between default and moltbook mode, remove and re-add:
+
+```bash
+# Switch to moltbook mode
+claude mcp remove moltmind
+claude mcp add moltmind -- npx -y moltmind --moltbook
+
+# Switch back to default (14 tools)
+claude mcp remove moltmind
+claude mcp add moltmind -- npx -y moltmind
+```
+
+Restart Claude Code after changing.
