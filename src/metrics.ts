@@ -1,8 +1,8 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import crypto from "node:crypto";
-import { getMetric, setMetric, getDiagnosticsSummary, insertSession, updateSession, getActiveSession } from "./db.js";
+import { getMetric, setMetric, getDiagnosticsSummary, insertSession, updateSession, getActiveSession, updateSessionHeartbeat, markStaleSessions, releaseAllClaims } from "./db.js";
 import { getHealthScore, getRecentFeedback } from "./diagnostics.js";
 import { getAggregateTokenSavings, type TokenSavingsReport } from "./token_estimator.js";
 
@@ -22,7 +22,9 @@ function getOrCreateInstanceId(): string {
     instanceId = readFileSync(INSTANCE_ID_PATH, "utf-8").trim();
   } else {
     instanceId = crypto.randomUUID();
-    writeFileSync(INSTANCE_ID_PATH, instanceId, "utf-8");
+    const tmpPath = INSTANCE_ID_PATH + ".tmp";
+    writeFileSync(tmpPath, instanceId, "utf-8");
+    renameSync(tmpPath, INSTANCE_ID_PATH);
   }
 
   return instanceId;
@@ -38,6 +40,7 @@ export function setCurrentSessionId(id: string): void {
 
 export function pauseCurrentSession(): void {
   if (currentSessionId) {
+    releaseAllClaims(currentSessionId);
     updateSession(currentSessionId, { status: "paused" });
     currentSessionId = null;
   }
@@ -63,7 +66,23 @@ export function initMetrics(): void {
   insertSession(sessionId);
   currentSessionId = sessionId;
 
-  console.error(`MoltMind: instance ${id.slice(0, 8)}... session #${sessions + 1} (sid: ${sessionId.slice(0, 8)})`);
+  // Register this session's PID and heartbeat
+  updateSessionHeartbeat(sessionId, process.pid);
+
+  // Clean up stale sessions from crashed processes
+  const staleCount = markStaleSessions();
+  if (staleCount > 0) {
+    console.error(`MoltMind: marked ${staleCount} stale session(s) as paused`);
+  }
+
+  console.error(`MoltMind: instance ${id.slice(0, 8)}... session #${sessions + 1} (sid: ${sessionId.slice(0, 8)}, pid: ${process.pid})`);
+}
+
+export function heartbeat(): void {
+  if (currentSessionId) {
+    updateSessionHeartbeat(currentSessionId, process.pid);
+    markStaleSessions();
+  }
 }
 
 export function recordToolCall(toolName: string, success: boolean): void {

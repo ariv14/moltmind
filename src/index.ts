@@ -3,9 +3,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { closeDb, getSession, getSessionDiagnostics, updateSession, listSessions, getLatestHandoff } from "./db.js";
+import { closeDb, getSession, getSessionDiagnostics, updateSession, listSessions, getLatestHandoff, releaseAllClaims } from "./db.js";
 import { withDiagnostics } from "./diagnostics.js";
-import { initMetrics, recordToolCall, pauseCurrentSession, getCurrentSessionId } from "./metrics.js";
+import { initMetrics, recordToolCall, pauseCurrentSession, getCurrentSessionId, heartbeat } from "./metrics.js";
 import { isMoltbookEnabled, getToolMode, getEnabledToolCount } from "./config.js";
 import { handleMmStore } from "./tools/mm_store.js";
 import { handleMmRecall } from "./tools/mm_recall.js";
@@ -132,6 +132,7 @@ server.tool(
     known_unknowns: z.array(z.string()).optional().describe("Things that still need investigation"),
     artifacts: z.array(z.string()).optional().describe("Files or resources involved"),
     stop_conditions: z.array(z.string()).optional().describe("When to consider the goal complete"),
+    claims: z.array(z.string()).optional().describe("Resources this session is working on (advisory locks for conflict avoidance)"),
   },
   wrapTool("mm_handoff_create", (args) => handleMmHandoffCreate(args as Parameters<typeof handleMmHandoffCreate>[0]))
 );
@@ -295,8 +296,22 @@ async function registerMoltbookTools(): Promise<void> {
 
 // --- Server lifecycle ---
 
+let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+
 function shutdown(): void {
   console.error("MoltMind shutting down");
+
+  // Stop heartbeat
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
+  }
+
+  // Release all claims held by this session
+  const sid = getCurrentSessionId();
+  if (sid) {
+    try { releaseAllClaims(sid); } catch { /* best effort */ }
+  }
 
   // Auto-save minimal session record if agent didn't call mm_session_save
   try {
@@ -328,26 +343,74 @@ function shutdown(): void {
 }
 
 async function main(): Promise<void> {
-  // Handle --upgrade flag
+  // Handle --upgrade flag — interactive checkout with polling
   if (process.argv.includes("--upgrade")) {
-    const { readFileSync, existsSync } = await import("node:fs");
+    const { readFileSync, writeFileSync, existsSync, mkdirSync } = await import("node:fs");
     const { join } = await import("node:path");
     const { homedir } = await import("node:os");
-    const instanceIdPath = join(homedir(), ".moltmind", "instance_id");
+    const { randomUUID } = await import("node:crypto");
+    const moltmindDir = join(homedir(), ".moltmind");
+    const instanceIdPath = join(moltmindDir, "instance_id");
+    const licensePath = join(moltmindDir, "license.key");
+
     if (!existsSync(instanceIdPath)) {
       console.error("No instance_id found. Run any MoltMind tool first to generate one.");
       process.exit(1);
     }
+
+    // Check if already Pro
+    const { isProTier: checkPro } = await import("./license.js");
+    if (checkPro()) {
+      console.error("Already on Pro tier. License is valid.");
+      process.exit(0);
+    }
+
     const instanceId = readFileSync(instanceIdPath, "utf-8").trim();
-    const url = `https://license.moltmind.com/checkout?id=${instanceId}`;
-    console.error(`Opening: ${url}`);
+    const activationToken = randomUUID();
+    const checkoutUrl = `https://aidigitalcrew.com/checkout?id=${encodeURIComponent(instanceId)}&token=${encodeURIComponent(activationToken)}`;
+
+    console.error("Opening checkout page...");
     const { exec } = await import("node:child_process");
     const cmd = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
-    exec(`${cmd} "${url}"`);
-    process.exit(0);
+    exec(`${cmd} "${checkoutUrl}"`);
+
+    console.error("Waiting for payment confirmation...");
+    const pollUrl = `https://aidigitalcrew.com/api/license/${activationToken}`;
+    const pollInterval = 3000;
+    const maxWait = 5 * 60 * 1000; // 5 minutes
+    const start = Date.now();
+
+    while (Date.now() - start < maxWait) {
+      await new Promise((r) => setTimeout(r, pollInterval));
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+        const res = await fetch(pollUrl, { signal: controller.signal });
+        clearTimeout(timeout);
+        if (res.ok) {
+          const data = await res.json() as { success: boolean; license_key?: string };
+          if (data.success && data.license_key) {
+            mkdirSync(moltmindDir, { recursive: true });
+            writeFileSync(licensePath, data.license_key, "utf-8");
+            console.error("Pro activated! Restart MoltMind to enable Pro features.");
+            process.exit(0);
+          }
+        }
+      } catch {
+        // Network error — keep polling
+      }
+    }
+
+    console.error("Timed out waiting for payment. If you completed checkout, run --upgrade again.");
+    process.exit(1);
   }
 
   initMetrics();
+
+  // Start session heartbeat (30s interval)
+  heartbeatInterval = setInterval(() => {
+    try { heartbeat(); } catch { /* non-critical */ }
+  }, 30000);
 
   // Auto-enable Zvec ANN for Pro users
   try {
@@ -375,6 +438,14 @@ async function main(): Promise<void> {
     }
   } catch {
     // License check failed — continue with brute-force silently
+  }
+
+  // Heartbeat check — verify this machine is still the active Pro license holder
+  try {
+    const { checkHeartbeat } = await import("./license.js");
+    await checkHeartbeat();
+  } catch {
+    // Non-blocking — don't prevent server startup
   }
 
   if (isMoltbookEnabled()) {

@@ -1,6 +1,7 @@
-import { updateMemory } from "../db.js";
+import { updateMemory, logSessionEvent } from "../db.js";
 import { embed, embeddingToBuffer } from "../embeddings.js";
 import { getVectorStore } from "../vector_store.js";
+import { getCurrentSessionId } from "../metrics.js";
 import type { MemoryType, MemoryTier } from "../types.js";
 
 export async function handleMmUpdate(args: {
@@ -38,6 +39,12 @@ export async function handleMmUpdate(args: {
   // Dual-write to vector store (no-op on BruteForceStore)
   if (newEmbedding) {
     getVectorStore().upsert(args.id, newEmbedding);
+  }
+
+  // Log cross-session event
+  const sessionId = getCurrentSessionId();
+  if (sessionId) {
+    logSessionEvent(sessionId, "memory_updated", updated.id, updated.title);
   }
 
   return {

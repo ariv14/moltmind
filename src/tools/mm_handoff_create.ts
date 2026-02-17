@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { insertHandoff } from "../db.js";
+import { insertHandoff, logSessionEvent, claimResource } from "../db.js";
 import { getCurrentSessionId } from "../metrics.js";
 
 export async function handleMmHandoffCreate(args: {
@@ -10,7 +10,10 @@ export async function handleMmHandoffCreate(args: {
   known_unknowns?: string[];
   artifacts?: string[];
   stop_conditions?: string[];
+  claims?: string[];
 }): Promise<Record<string, unknown>> {
+  const sessionId = getCurrentSessionId() ?? crypto.randomUUID();
+
   const handoff = insertHandoff({
     goal: args.goal,
     current_state: args.current_state,
@@ -19,8 +22,27 @@ export async function handleMmHandoffCreate(args: {
     known_unknowns: args.known_unknowns ?? [],
     artifacts: args.artifacts ?? [],
     stop_conditions: args.stop_conditions ?? [],
-    session_id: getCurrentSessionId() ?? crypto.randomUUID(),
+    session_id: sessionId,
   });
 
-  return { success: true, handoff };
+  // Log cross-session event
+  logSessionEvent(sessionId, "handoff_created", handoff.id, args.goal.slice(0, 100));
+
+  // Process claims if provided
+  const claimResults: Array<{ resource: string; success: boolean; held_by?: string }> = [];
+  if (args.claims && args.claims.length > 0) {
+    for (const resource of args.claims) {
+      const result = claimResource(sessionId, resource, process.pid, args.goal.slice(0, 100));
+      claimResults.push({ resource, ...result });
+      if (result.success) {
+        logSessionEvent(sessionId, "claim", resource, `Claimed: ${resource}`);
+      }
+    }
+  }
+
+  return {
+    success: true,
+    handoff,
+    ...(claimResults.length > 0 ? { claims: claimResults } : {}),
+  };
 }

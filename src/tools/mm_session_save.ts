@@ -1,4 +1,4 @@
-import { updateSession, getSession, getSessionDiagnostics } from "../db.js";
+import { updateSession, getSession, getSessionDiagnostics, releaseAllClaims } from "../db.js";
 import { getCurrentSessionId } from "../metrics.js";
 import type { SessionStatus } from "../types.js";
 
@@ -37,6 +37,11 @@ export async function handleMmSessionSave(args: {
   const actionsTaken = (args.actions_taken && args.actions_taken.length > 0)
     ? args.actions_taken
     : buildActionsFromDiagnostics(sessionId);
+
+  // Release all claims when session is paused or completed
+  if (status === "paused" || status === "completed") {
+    releaseAllClaims(sessionId);
+  }
 
   const updated = updateSession(sessionId, {
     status,

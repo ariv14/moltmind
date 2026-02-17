@@ -3,7 +3,7 @@ import { mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import crypto from "node:crypto";
-import type { Memory, MemoryType, MemoryTier, Handoff, Session, SessionStatus } from "./types.js";
+import type { Memory, MemoryType, MemoryTier, Handoff, Session, SessionStatus, SessionEvent, SessionClaim } from "./types.js";
 
 const GLOBAL_DIR = join(homedir(), ".moltmind");
 const GLOBAL_DB_PATH = join(GLOBAL_DIR, "memory.db");
@@ -186,6 +186,41 @@ function migrateV4(database: Database.Database): void {
   }
 }
 
+function migrateV7(database: Database.Database): void {
+  // Add pid and last_heartbeat columns to sessions table
+  const columns = database.prepare("PRAGMA table_info(sessions)").all() as Array<{ name: string }>;
+  const hasPid = columns.some((c) => c.name === "pid");
+  if (!hasPid) {
+    database.exec("ALTER TABLE sessions ADD COLUMN pid INTEGER");
+    database.exec("ALTER TABLE sessions ADD COLUMN last_heartbeat TEXT");
+  }
+
+  // Session events — lightweight cross-session awareness
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS session_events (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      resource_id TEXT,
+      summary TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_events_created ON session_events(created_at);
+    CREATE INDEX IF NOT EXISTS idx_session_events_type ON session_events(event_type);
+  `);
+
+  // Session claims — advisory locks for conflict avoidance
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS session_claims (
+      resource TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      pid INTEGER,
+      claimed_at TEXT NOT NULL,
+      description TEXT
+    );
+  `);
+}
+
 const migrations: Array<(database: Database.Database) => void> = [
   migrateV1,
   migrateV2,
@@ -193,6 +228,7 @@ const migrations: Array<(database: Database.Database) => void> = [
   migrateV4,
   migrateV5,
   migrateV6,
+  migrateV7,
 ];
 
 function migrate(database: Database.Database): void {
@@ -217,6 +253,7 @@ export function getDb(): Database.Database {
 
   db = new Database(dbPath);
   db.pragma("journal_mode = WAL");
+  db.pragma("busy_timeout = 3000");
   migrate(db);
 
   return db;
@@ -574,6 +611,7 @@ export function getGlobalDb(): Database.Database {
   ensureDir(GLOBAL_DIR);
   globalDb = new Database(GLOBAL_DB_PATH);
   globalDb.pragma("journal_mode = WAL");
+  globalDb.pragma("busy_timeout = 3000");
   migrate(globalDb);
 
   return globalDb;
@@ -618,6 +656,8 @@ function rowToSession(row: Record<string, unknown>): Session {
     started_at: row.started_at as string,
     ended_at: (row.ended_at as string) ?? null,
     metadata: JSON.parse(row.metadata as string) as Record<string, unknown>,
+    pid: (row.pid as number) ?? null,
+    last_heartbeat: (row.last_heartbeat as string) ?? null,
   };
 }
 
@@ -755,6 +795,7 @@ export function initProjectVault(activeSessionId?: string | null): string {
   closeDb();
   db = new Database(PROJECT_DB_PATH);
   db.pragma("journal_mode = WAL");
+  db.pragma("busy_timeout = 3000");
   migrate(db);
 
   // Carry over the active session so mm_session_save still works
@@ -766,6 +807,125 @@ export function initProjectVault(activeSessionId?: string | null): string {
   }
 
   return PROJECT_DB_PATH;
+}
+
+// --- Session Heartbeat & Coordination ---
+
+export function updateSessionHeartbeat(id: string, pid: number): void {
+  const database = getDb();
+  database.prepare(
+    "UPDATE sessions SET pid = ?, last_heartbeat = ? WHERE id = ?"
+  ).run(pid, new Date().toISOString(), id);
+}
+
+export function markStaleSessions(staleCutoffMs: number = 60000): number {
+  const database = getDb();
+  const cutoff = new Date(Date.now() - staleCutoffMs).toISOString();
+  const result = database.prepare(
+    "UPDATE sessions SET status = 'paused', ended_at = ? WHERE status = 'active' AND last_heartbeat IS NOT NULL AND last_heartbeat < ?"
+  ).run(new Date().toISOString(), cutoff);
+
+  // Release claims held by stale sessions
+  if (result.changes > 0) {
+    database.prepare(
+      "DELETE FROM session_claims WHERE session_id IN (SELECT id FROM sessions WHERE status = 'paused' AND last_heartbeat IS NOT NULL AND last_heartbeat < ?)"
+    ).run(cutoff);
+  }
+
+  return result.changes;
+}
+
+export function getActiveSessions(): Session[] {
+  const database = getDb();
+  const rows = database.prepare(
+    "SELECT * FROM sessions WHERE status = 'active' ORDER BY started_at DESC"
+  ).all() as Record<string, unknown>[];
+  return rows.map(rowToSession);
+}
+
+// --- Session Events ---
+
+export function logSessionEvent(
+  sessionId: string,
+  eventType: string,
+  resourceId: string | null = null,
+  summary: string | null = null
+): void {
+  const database = getDb();
+  database.prepare(
+    "INSERT INTO session_events (id, session_id, event_type, resource_id, summary, created_at) VALUES (?, ?, ?, ?, ?, ?)"
+  ).run(crypto.randomUUID(), sessionId, eventType, resourceId, summary, new Date().toISOString());
+}
+
+export function getRecentEvents(sinceIso: string, limit: number = 50): SessionEvent[] {
+  const database = getDb();
+  const rows = database.prepare(
+    "SELECT * FROM session_events WHERE created_at > ? ORDER BY created_at DESC LIMIT ?"
+  ).all(sinceIso, limit) as Record<string, unknown>[];
+  return rows.map((row) => ({
+    id: row.id as string,
+    session_id: row.session_id as string,
+    event_type: row.event_type as string,
+    resource_id: (row.resource_id as string) ?? null,
+    summary: (row.summary as string) ?? null,
+    created_at: row.created_at as string,
+  }));
+}
+
+// --- Session Claims (Advisory Locks) ---
+
+export function claimResource(
+  sessionId: string,
+  resource: string,
+  pid: number,
+  description: string | null = null
+): { success: boolean; held_by?: string } {
+  const database = getDb();
+
+  // Check if already claimed by a different active session with fresh heartbeat
+  const existing = database.prepare(
+    "SELECT sc.session_id, sc.pid FROM session_claims sc JOIN sessions s ON sc.session_id = s.id WHERE sc.resource = ? AND s.status = 'active'"
+  ).get(resource) as { session_id: string; pid: number } | undefined;
+
+  if (existing && existing.session_id !== sessionId) {
+    return { success: false, held_by: existing.session_id };
+  }
+
+  database.prepare(
+    "INSERT OR REPLACE INTO session_claims (resource, session_id, pid, claimed_at, description) VALUES (?, ?, ?, ?, ?)"
+  ).run(resource, sessionId, pid, new Date().toISOString(), description);
+
+  return { success: true };
+}
+
+export function releaseResource(sessionId: string, resource: string): boolean {
+  const database = getDb();
+  const result = database.prepare(
+    "DELETE FROM session_claims WHERE session_id = ? AND resource = ?"
+  ).run(sessionId, resource);
+  return result.changes > 0;
+}
+
+export function releaseAllClaims(sessionId: string): number {
+  const database = getDb();
+  const result = database.prepare(
+    "DELETE FROM session_claims WHERE session_id = ?"
+  ).run(sessionId);
+  return result.changes;
+}
+
+export function getActiveClaims(): SessionClaim[] {
+  const database = getDb();
+  const rows = database.prepare(
+    "SELECT sc.* FROM session_claims sc JOIN sessions s ON sc.session_id = s.id WHERE s.status = 'active'"
+  ).all() as Record<string, unknown>[];
+  return rows.map((row) => ({
+    resource: row.resource as string,
+    session_id: row.session_id as string,
+    pid: row.pid as number,
+    claimed_at: row.claimed_at as string,
+    description: (row.description as string) ?? null,
+  }));
 }
 
 // --- Moltbook post dedup ---

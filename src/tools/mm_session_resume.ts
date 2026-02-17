@@ -1,4 +1,4 @@
-import { listSessions, getLatestHandoff, getSessionDiagnostics } from "../db.js";
+import { listSessions, getLatestHandoff, getSessionDiagnostics, getActiveSessions, getRecentEvents } from "../db.js";
 
 export async function handleMmSessionResume(args: {
   limit?: number;
@@ -29,12 +29,24 @@ export async function handleMmSessionResume(args: {
     };
   });
 
+  // Concurrent session awareness
+  const activeSessions = getActiveSessions();
+  const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+  const recentActivity = getRecentEvents(tenMinAgo, 20).map((e) => ({
+    session_id: e.session_id.slice(0, 8),
+    event_type: e.event_type,
+    summary: e.summary,
+    created_at: e.created_at,
+  }));
+
   return {
     success: true,
     sessions: sessionSummaries,
     latest_handoff: handoff ?? null,
+    concurrent_sessions: activeSessions.length,
+    recent_activity: recentActivity,
     message: sessions.length > 0
-      ? `Found ${sessions.length} recent session(s)`
+      ? `Found ${sessions.length} recent session(s)${activeSessions.length > 1 ? ` (${activeSessions.length} currently active)` : ""}`
       : "No previous sessions found",
   };
 }

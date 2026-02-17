@@ -287,24 +287,180 @@ describe("Database Layer", () => {
   });
 
   describe("migrations", () => {
-    it("should set schema version to 6 after all migrations", () => {
+    it("should set schema version to 7 after all migrations", () => {
       const version = db.getDbSchemaVersion();
-      assert.equal(version, 6);
+      assert.equal(version, 7);
     });
 
     it("should be idempotent — reopening DB does not re-run migrations", () => {
-      // Insert data, close, reopen — data should persist and version stays at 6
       db.insertMemory({ type: "raw", title: "Before reopen", content: "test", tags: [], metadata: {}, embedding: null, tier: "hot" });
 
       db.closeDb();
       db.getDb(); // reopen triggers migrate() which should be a no-op
 
       const version = db.getDbSchemaVersion();
-      assert.equal(version, 6);
+      assert.equal(version, 7);
 
       const all = db.getAllMemories();
       assert.equal(all.length, 1);
       assert.equal(all[0].title, "Before reopen");
+    });
+  });
+
+  describe("Session Heartbeat", () => {
+    it("should update session heartbeat and pid", () => {
+      const session = db.insertSession(crypto.randomUUID());
+      db.updateSessionHeartbeat(session.id, 12345);
+
+      const updated = db.getSession(session.id);
+      assert.ok(updated);
+      assert.equal(updated.pid, 12345);
+      assert.ok(updated.last_heartbeat);
+    });
+
+    it("should mark stale sessions as paused", () => {
+      const session = db.insertSession(crypto.randomUUID());
+      // Set heartbeat to 2 minutes ago (stale)
+      const twoMinAgo = new Date(Date.now() - 120000).toISOString();
+      db.getDb().prepare("UPDATE sessions SET last_heartbeat = ?, pid = ? WHERE id = ?").run(twoMinAgo, 99999, session.id);
+
+      const staleCount = db.markStaleSessions();
+      assert.equal(staleCount, 1);
+
+      const updated = db.getSession(session.id);
+      assert.ok(updated);
+      assert.equal(updated.status, "paused");
+    });
+
+    it("should not mark fresh sessions as stale", () => {
+      const session = db.insertSession(crypto.randomUUID());
+      db.updateSessionHeartbeat(session.id, process.pid);
+
+      const staleCount = db.markStaleSessions();
+      assert.equal(staleCount, 0);
+
+      const updated = db.getSession(session.id);
+      assert.ok(updated);
+      assert.equal(updated.status, "active");
+    });
+
+    it("should return active sessions", () => {
+      db.insertSession(crypto.randomUUID());
+      db.insertSession(crypto.randomUUID());
+
+      const active = db.getActiveSessions();
+      assert.ok(active.length >= 2);
+    });
+  });
+
+  describe("Session Events", () => {
+    it("should log and retrieve events", () => {
+      const sessionId = crypto.randomUUID();
+      db.insertSession(sessionId);
+
+      const beforeInsert = new Date(Date.now() - 1000).toISOString();
+      db.logSessionEvent(sessionId, "memory_stored", "mem-123", "Test memory");
+      db.logSessionEvent(sessionId, "handoff_created", "hoff-456", "Test handoff");
+
+      const events = db.getRecentEvents(beforeInsert);
+      assert.equal(events.length, 2);
+      assert.equal(events[0].event_type, "handoff_created");
+      assert.equal(events[1].event_type, "memory_stored");
+    });
+
+    it("should respect time filter", () => {
+      const sessionId = crypto.randomUUID();
+      db.insertSession(sessionId);
+
+      // Insert old event with explicit past timestamp
+      const database = db.getDb();
+      const oldTime = new Date(Date.now() - 5000).toISOString();
+      database.prepare(
+        "INSERT INTO session_events (id, session_id, event_type, resource_id, summary, created_at) VALUES (?, ?, ?, ?, ?, ?)"
+      ).run(crypto.randomUUID(), sessionId, "memory_stored", "mem-1", "Old event", oldTime);
+
+      const cutoff = new Date(Date.now() - 2000).toISOString();
+      db.logSessionEvent(sessionId, "memory_stored", "mem-2", "New event");
+
+      const events = db.getRecentEvents(cutoff);
+      assert.equal(events.length, 1);
+      assert.equal(events[0].summary, "New event");
+    });
+  });
+
+  describe("Session Claims", () => {
+    it("should claim and release a resource", () => {
+      const sessionId = crypto.randomUUID();
+      db.insertSession(sessionId);
+      db.updateSessionHeartbeat(sessionId, process.pid);
+
+      const result = db.claimResource(sessionId, "src/db.ts", process.pid, "refactoring");
+      assert.equal(result.success, true);
+
+      const claims = db.getActiveClaims();
+      assert.equal(claims.length, 1);
+      assert.equal(claims[0].resource, "src/db.ts");
+      assert.equal(claims[0].description, "refactoring");
+
+      const released = db.releaseResource(sessionId, "src/db.ts");
+      assert.equal(released, true);
+
+      const afterRelease = db.getActiveClaims();
+      assert.equal(afterRelease.length, 0);
+    });
+
+    it("should block claim when held by another active session", () => {
+      const session1 = crypto.randomUUID();
+      const session2 = crypto.randomUUID();
+      db.insertSession(session1);
+      db.insertSession(session2);
+      db.updateSessionHeartbeat(session1, 11111);
+      db.updateSessionHeartbeat(session2, 22222);
+
+      db.claimResource(session1, "src/db.ts", 11111, "editing");
+      const result = db.claimResource(session2, "src/db.ts", 22222, "also editing");
+      assert.equal(result.success, false);
+      assert.equal(result.held_by, session1);
+    });
+
+    it("should allow re-claim by same session", () => {
+      const sessionId = crypto.randomUUID();
+      db.insertSession(sessionId);
+      db.updateSessionHeartbeat(sessionId, process.pid);
+
+      db.claimResource(sessionId, "src/db.ts", process.pid, "first");
+      const result = db.claimResource(sessionId, "src/db.ts", process.pid, "updated");
+      assert.equal(result.success, true);
+
+      const claims = db.getActiveClaims();
+      assert.equal(claims.length, 1);
+      assert.equal(claims[0].description, "updated");
+    });
+
+    it("should release all claims for a session", () => {
+      const sessionId = crypto.randomUUID();
+      db.insertSession(sessionId);
+      db.updateSessionHeartbeat(sessionId, process.pid);
+
+      db.claimResource(sessionId, "file1.ts", process.pid);
+      db.claimResource(sessionId, "file2.ts", process.pid);
+
+      const count = db.releaseAllClaims(sessionId);
+      assert.equal(count, 2);
+      assert.equal(db.getActiveClaims().length, 0);
+    });
+
+    it("should release stale claims when marking stale sessions", () => {
+      const sessionId = crypto.randomUUID();
+      db.insertSession(sessionId);
+      const twoMinAgo = new Date(Date.now() - 120000).toISOString();
+      db.getDb().prepare("UPDATE sessions SET last_heartbeat = ?, pid = ? WHERE id = ?").run(twoMinAgo, 99999, sessionId);
+      db.claimResource(sessionId, "stale-file.ts", 99999);
+
+      db.markStaleSessions();
+
+      const claims = db.getActiveClaims();
+      assert.equal(claims.length, 0);
     });
   });
 

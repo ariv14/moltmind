@@ -87,6 +87,25 @@ export interface Session {
   started_at: string;
   ended_at: string | null;
   metadata: Record<string, unknown>;
+  pid: number | null;
+  last_heartbeat: string | null;
+}
+
+export interface SessionEvent {
+  id: string;
+  session_id: string;
+  event_type: string;
+  resource_id: string | null;
+  summary: string | null;
+  created_at: string;
+}
+
+export interface SessionClaim {
+  resource: string;
+  session_id: string;
+  pid: number;
+  claimed_at: string;
+  description: string | null;
 }
 
 export interface SearchResult {
