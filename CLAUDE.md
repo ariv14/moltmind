@@ -84,6 +84,7 @@ src/
     └── mm_metrics.ts
 scripts/
 └── generate-license.ts  # RSA key generator (NOT published to npm). Signs instance_id with private key.
+release_instructions.md   # Full release checklist — when to publish, version bumping, post-release verification.
 tests/
 ├── db.test.ts
 ├── embeddings.test.ts
@@ -333,6 +334,7 @@ CREATE TABLE IF NOT EXISTS token_estimates (
   2. `src/index.ts` → McpServer constructor `version`
   3. `src/tools/mm_status.ts` → response `version` field
   4. `tests/tools.test.ts` → version assertion
+- See @release_instructions.md for the full release checklist and when to publish vs not.
 
 ## Commands
 
@@ -361,6 +363,7 @@ CREATE TABLE IF NOT EXISTS token_estimates (
 - Triggers: push to `main`, pull requests to `main`
 - Steps: checkout → setup Node 18 → npm ci → npm run lint → npm test
 - Must pass before merging any PR
+- For npm releases, follow @release_instructions.md — it covers pre-publish checks, version bumping, and post-release verification
 
 ## Git Workflow
 
@@ -368,6 +371,7 @@ CREATE TABLE IF NOT EXISTS token_estimates (
 - Commit messages: `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:` prefixes
 - Run `npm run lint` and `npm test` before committing
 - PR descriptions should reference the relevant plan.md phase
+- **Before any npm publish**, follow @release_instructions.md — verify the release is necessary, only publish when published files (`dist/`, `README.md`, `LICENSE`) have changed
 
 ## Security Considerations
 
@@ -394,3 +398,4 @@ CREATE TABLE IF NOT EXISTS token_estimates (
 - Do not commit or publish `~/.moltmind/license-private.pem` — it is the signing key for Pro licenses
 - Do not add `@moltmind/zvec-native` as a hard dependency — it is an optional dynamic import behind `--zvec`
 - Do not bypass free tier limits in `mm_store` — always call `checkStoreLimits()` before insert
+- Do not publish to npm when only non-published files changed (CLAUDE.md, tests, scripts, CI) — see @release_instructions.md
