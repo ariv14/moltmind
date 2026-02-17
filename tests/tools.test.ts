@@ -183,7 +183,7 @@ describe("MCP Tool Handlers", () => {
     it("should return server status", async () => {
       const result = await handleMmStatus();
       assert.equal(result.success, true);
-      assert.equal(result.version, "0.8.1");
+      assert.equal(result.version, "0.8.2");
       assert.ok(result.db_stats);
       assert.equal(typeof result.health_score, "number");
       assert.equal(typeof result.uptime_seconds, "number");

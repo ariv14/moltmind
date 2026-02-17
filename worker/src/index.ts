@@ -157,7 +157,7 @@ async function handleCheckout(request: Request, env: Env): Promise<Response> {
         instance_id: instanceId,
         activation_token: activationToken,
       },
-      success_url: `https://moltmind-license.arimatch1.workers.dev/api/license/${activationToken}?success=true`,
+      success_url: `https://api.aidigitalcrew.com/api/license/${activationToken}?success=true`,
     }),
   });
 
