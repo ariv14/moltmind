@@ -30,7 +30,7 @@ import { handleMbSubmolt } from "./tools/mb_submolt.js";
 
 const server = new McpServer({
   name: "moltmind",
-  version: "0.1.0",
+  version: "0.3.0",
 });
 
 function wrapTool(
