@@ -131,6 +131,19 @@ function migrateV3(database: Database.Database): void {
   `);
 }
 
+function migrateV5(database: Database.Database): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS token_estimates (
+      session_id TEXT PRIMARY KEY,
+      overhead_tokens INTEGER NOT NULL DEFAULT 0,
+      tool_response_tokens INTEGER NOT NULL DEFAULT 0,
+      cold_start_avoided INTEGER NOT NULL DEFAULT 0,
+      net_savings INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL
+    );
+  `);
+}
+
 function migrateV4(database: Database.Database): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
@@ -164,6 +177,7 @@ const migrations: Array<(database: Database.Database) => void> = [
   migrateV2,
   migrateV3,
   migrateV4,
+  migrateV5,
 ];
 
 function migrate(database: Database.Database): void {

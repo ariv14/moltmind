@@ -6,9 +6,24 @@ import {
   getRecentFeedback as getRecentFeedbackDb,
 } from "./db.js";
 import { getCurrentSessionId } from "./metrics.js";
+import { estimateResponseTokens, upsertTokenEstimate } from "./token_estimator.js";
 
 interface ToolResult {
   content: Array<{ type: "text"; text: string }>;
+}
+
+const RESUME_TOOLS = ["mm_session_resume", "mm_handoff_load"];
+
+function trackTokens(result: ToolResult, toolName: string, sessionId: string | null): void {
+  if (!sessionId) return;
+  try {
+    const responseLength = result.content.reduce((sum, c) => sum + c.text.length, 0);
+    const tokens = estimateResponseTokens(responseLength);
+    const coldStartAvoided = RESUME_TOOLS.includes(toolName);
+    upsertTokenEstimate(sessionId, tokens, coldStartAvoided);
+  } catch {
+    // Non-critical — don't let token tracking break tool execution
+  }
 }
 
 export async function withDiagnostics(
@@ -20,13 +35,16 @@ export async function withDiagnostics(
   try {
     const result = await handler();
     insertDiagnostic(toolName, true, performance.now() - start, null, sessionId);
+    trackTokens(result, toolName, sessionId);
     return result;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     insertDiagnostic(toolName, false, performance.now() - start, msg, sessionId);
-    return {
+    const errorResult: ToolResult = {
       content: [{ type: "text" as const, text: JSON.stringify({ success: false, message: msg }) }],
     };
+    trackTokens(errorResult, toolName, sessionId);
+    return errorResult;
   }
 }
 

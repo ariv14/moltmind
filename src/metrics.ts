@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import crypto from "node:crypto";
 import { getMetric, setMetric, getDiagnosticsSummary, insertSession, updateSession, getActiveSession } from "./db.js";
 import { getHealthScore, getRecentFeedback } from "./diagnostics.js";
+import { getAggregateTokenSavings, type TokenSavingsReport } from "./token_estimator.js";
 
 const MOLTMIND_DIR = join(homedir(), ".moltmind");
 const INSTANCE_ID_PATH = join(MOLTMIND_DIR, "instance_id");
@@ -108,6 +109,7 @@ export interface FullMetrics {
     total: number;
     recent: Array<{ type: string; message: string; tool_name: string | null; created_at: string }>;
   };
+  token_savings: TokenSavingsReport;
   uptime_seconds: number;
 }
 
@@ -143,6 +145,23 @@ export function getFullMetrics(): FullMetrics {
   // Feedback
   const recentFeedback = getRecentFeedback(5);
 
+  // Token savings
+  let tokenSavings: TokenSavingsReport;
+  try {
+    tokenSavings = getAggregateTokenSavings();
+  } catch {
+    tokenSavings = {
+      sessions_tracked: 0,
+      overhead_tokens: 0,
+      tool_response_tokens: 0,
+      cold_starts_avoided: 0,
+      cold_start_savings: 0,
+      net_savings: 0,
+      savings_percent: 0,
+      mode: "default",
+    };
+  }
+
   const installAgeDays = Math.floor(
     (Date.now() - new Date(firstSeen).getTime()) / (1000 * 60 * 60 * 24)
   );
@@ -169,6 +188,7 @@ export function getFullMetrics(): FullMetrics {
       total: recentFeedback.length,
       recent: recentFeedback,
     },
+    token_savings: tokenSavings,
     uptime_seconds: Math.floor((Date.now() - startTime) / 1000),
   };
 }

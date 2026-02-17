@@ -11,6 +11,7 @@
     "build": "tsc",
     "dev": "tsx watch src/index.ts",
     "test": "tsx --test tests/*.test.ts",
+    "benchmark": "tsx scripts/benchmark-tokens.ts",
     "lint": "tsc --noEmit",
     "clean": "rm -rf dist"
   },

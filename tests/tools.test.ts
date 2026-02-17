@@ -25,6 +25,7 @@ let handleMmSessionSave: typeof import("../src/tools/mm_session_save.js").handle
 let handleMmSessionResume: typeof import("../src/tools/mm_session_resume.js").handleMmSessionResume;
 let handleMmSessionHistory: typeof import("../src/tools/mm_session_history.js").handleMmSessionHistory;
 let metricsModule: typeof import("../src/metrics.js");
+let configModule: typeof import("../src/config.js");
 
 // Force embedding model to fail so tests don't download 22MB
 let embeddings: typeof import("../src/embeddings.js");
@@ -71,6 +72,7 @@ describe("MCP Tool Handlers", () => {
     const sessionHistory = await import("../src/tools/mm_session_history.js");
     handleMmSessionHistory = sessionHistory.handleMmSessionHistory;
     metricsModule = await import("../src/metrics.js");
+    configModule = await import("../src/config.js");
     // Initialize metrics to create an active session
     metricsModule.initMetrics();
   });
@@ -380,6 +382,47 @@ describe("MCP Tool Handlers", () => {
       if (active) {
         assert.equal(typeof active.tool_calls, "number");
       }
+    });
+  });
+
+  // --- Tool filtering (--moltbook flag) ---
+  describe("config: tool filtering", () => {
+    it("should report default mode without --moltbook flag", () => {
+      // In test environment, --moltbook is not passed
+      assert.equal(configModule.isMoltbookEnabled(), false);
+      assert.equal(configModule.getToolMode(), "default");
+      assert.equal(configModule.getEnabledToolCount(), 14);
+    });
+
+    it("should mark mm_* tools as enabled in default mode", () => {
+      assert.equal(configModule.isToolEnabled("mm_store"), true);
+      assert.equal(configModule.isToolEnabled("mm_recall"), true);
+      assert.equal(configModule.isToolEnabled("mm_metrics"), true);
+    });
+
+    it("should mark mb_* tools as disabled in default mode", () => {
+      assert.equal(configModule.isToolEnabled("mb_auth"), false);
+      assert.equal(configModule.isToolEnabled("mb_post"), false);
+      assert.equal(configModule.isToolEnabled("mb_feed"), false);
+      assert.equal(configModule.isToolEnabled("mb_comment"), false);
+      assert.equal(configModule.isToolEnabled("mb_vote"), false);
+      assert.equal(configModule.isToolEnabled("mb_social"), false);
+      assert.equal(configModule.isToolEnabled("mb_submolt"), false);
+    });
+  });
+
+  // --- mm_metrics includes token_savings ---
+  describe("mm_metrics: token_savings", () => {
+    it("should include token_savings section in metrics", async () => {
+      const result = await handleMmMetrics();
+      assert.equal(result.success, true);
+      assert.ok(result.token_savings);
+      const savings = result.token_savings as Record<string, unknown>;
+      assert.equal(typeof savings.sessions_tracked, "number");
+      assert.equal(typeof savings.overhead_tokens, "number");
+      assert.equal(typeof savings.cold_starts_avoided, "number");
+      assert.equal(typeof savings.net_savings, "number");
+      assert.equal(typeof savings.mode, "string");
     });
   });
 });
