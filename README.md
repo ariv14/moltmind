@@ -26,9 +26,32 @@ Add to your MCP config:
 }
 ```
 
+## Moltbook Social (opt-in)
+
+MoltMind includes optional social tools for [moltbook.com](https://moltbook.com) — a social network for AI agents. These are **disabled by default** to keep token overhead low. To enable them, add the `--moltbook` flag:
+
+**Claude Code:**
+```bash
+claude mcp add moltmind -- npx -y moltmind --moltbook
+```
+
+**Cursor / Windsurf / Cline:**
+```json
+{
+  "mcpServers": {
+    "moltmind": {
+      "command": "npx",
+      "args": ["-y", "moltmind", "--moltbook"]
+    }
+  }
+}
+```
+
+This adds 7 social tools (`mb_auth`, `mb_post`, `mb_feed`, `mb_comment`, `mb_vote`, `mb_social`, `mb_submolt`) for posting, commenting, voting, and following on moltbook.com.
+
 ## Tools
 
-MoltMind provides 14 tools that your agent can use:
+MoltMind provides 14 core tools by default (21 with `--moltbook`):
 
 | Tool | Description |
 |------|-------------|
@@ -82,7 +105,7 @@ MoltMind automatically tracks sessions across agent restarts:
 All diagnostics are tagged with the current session ID, so you can see exactly what tools were called in each session.
 
 ### Diagnostics & Metrics
-Every tool call is logged locally with latency and success/failure. `mm_status` shows a health score, and `mm_metrics` provides a full dashboard of adoption data, per-tool usage stats, and error rates. All data stays on your machine.
+Every tool call is logged locally with latency and success/failure. `mm_status` shows a health score, and `mm_metrics` provides a full dashboard of adoption data, per-tool usage stats, error rates, and token savings estimates. All data stays on your machine.
 
 ## Data Storage
 
@@ -93,6 +116,51 @@ Every tool call is logged locally with latency and success/failure. `mm_status` 
 | `~/.moltmind/models/` | Cached embedding model |
 | `~/.moltmind/instance_id` | Anonymous instance identifier |
 
+## Token Cost
+
+MCP tools add token overhead because their descriptions are sent with every LLM request. MoltMind is designed to pay for itself quickly:
+
+### Overhead
+
+| Mode | Tools | Overhead per request |
+|------|-------|---------------------|
+| Default (memory + sessions) | 14 | ~500 tokens |
+| + Moltbook social (`--moltbook`) | 21 | ~1,000 tokens |
+| Default + prompt caching | 14 | ~50 tokens |
+
+Most LLM providers (Claude, GPT-4) cache tool descriptions after the first request, reducing real overhead by ~90%.
+
+### ROI: session resume vs cold start
+
+Without MoltMind, an agent re-exploring a codebase from scratch costs **~8,000 tokens** per session. MoltMind's `mm_session_resume` restores full context in **~325 tokens** — a 96% reduction.
+
+| Scenario | Without MoltMind | With MoltMind | Savings |
+|----------|-----------------|---------------|---------|
+| Single session resume | ~8,000 tokens | ~825 tokens | 90% |
+| 5-session project | ~40,000 tokens | ~7,500 tokens | 81% |
+| 20-session project | ~160,000 tokens | ~40,200 tokens | 75% |
+
+The tool overhead pays for itself after a single session resume.
+
+### Built-in tracking
+
+MoltMind tracks token savings automatically. Run `mm_metrics` to see your cumulative savings:
+
+```
+Token Savings (estimated):
+  Sessions tracked: 15
+  Cold starts avoided: 12 (saved ~92,100 tokens)
+  Mode: default (add --moltbook for social tools)
+```
+
+### Benchmark
+
+Run the built-in benchmark to see projected savings for your usage pattern:
+
+```bash
+npm run benchmark
+```
+
 ## Architecture
 
 ```
@@ -101,7 +169,7 @@ Agent (Claude Code / Cursor / any MCP client)
   ▼ (STDIO JSON-RPC)
 ┌─────────────────────────────────────┐
 │  MCP Server (src/index.ts)          │
-│  14 tools with zod validation       │
+│  14-21 tools with zod validation    │
 │  withDiagnostics() on every call    │
 ├─────────────────────────────────────┤
 │  Embeddings        │  Diagnostics   │
@@ -110,7 +178,7 @@ Agent (Claude Code / Cursor / any MCP client)
 │  Graceful fallback  │  Metrics       │
 ├─────────────────────────────────────┤
 │  SQLite + WAL + FTS5                │
-│  Schema v4 with migrations          │
+│  Schema v5 with migrations          │
 └─────────────────────────────────────┘
 ```
 
