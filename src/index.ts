@@ -5,7 +5,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { closeDb } from "./db.js";
 import { withDiagnostics } from "./diagnostics.js";
-import { initMetrics, recordToolCall } from "./metrics.js";
+import { initMetrics, recordToolCall, pauseCurrentSession } from "./metrics.js";
 import { handleMmStore } from "./tools/mm_store.js";
 import { handleMmRecall } from "./tools/mm_recall.js";
 import { handleMmRead } from "./tools/mm_read.js";
@@ -17,6 +17,9 @@ import { handleMmHandoffCreate } from "./tools/mm_handoff_create.js";
 import { handleMmHandoffLoad } from "./tools/mm_handoff_load.js";
 import { handleMmFeedback } from "./tools/mm_feedback.js";
 import { handleMmMetrics } from "./tools/mm_metrics.js";
+import { handleMmSessionSave } from "./tools/mm_session_save.js";
+import { handleMmSessionResume } from "./tools/mm_session_resume.js";
+import { handleMmSessionHistory } from "./tools/mm_session_history.js";
 import { handleMbAuth } from "./tools/mb_auth.js";
 import { handleMbPost } from "./tools/mb_post.js";
 import { handleMbFeed } from "./tools/mb_feed.js";
@@ -158,6 +161,43 @@ server.tool(
   wrapTool("mm_metrics", () => handleMmMetrics())
 );
 
+// --- Session Tools ---
+
+server.tool(
+  "mm_session_save",
+  "Save session summary, actions, outcomes, and where we left off. Marks session paused or completed.",
+  {
+    summary: z.string().max(2000).optional().describe("Summary of what happened this session"),
+    goal: z.string().max(1000).optional().describe("What the session was trying to accomplish"),
+    actions_taken: z.array(z.string()).optional().describe("List of actions taken during the session"),
+    outcomes: z.array(z.string()).optional().describe("List of outcomes (success/failure)"),
+    where_left_off: z.string().max(2000).optional().describe("Where things stand at the end of the session"),
+    status: z.enum(["paused", "completed"]).optional().describe("Session end status (default: paused)"),
+    metadata: z.record(z.string(), z.unknown()).optional().describe("Additional session metadata"),
+  },
+  wrapTool("mm_session_save", (args) => handleMmSessionSave(args as Parameters<typeof handleMmSessionSave>[0]))
+);
+
+server.tool(
+  "mm_session_resume",
+  "Load recent sessions + latest handoff, return formatted summary for agent to present.",
+  {
+    limit: z.number().int().min(1).max(50).optional().describe("Number of recent sessions to load (default 5)"),
+  },
+  wrapTool("mm_session_resume", (args) => handleMmSessionResume(args as Parameters<typeof handleMmSessionResume>[0]))
+);
+
+server.tool(
+  "mm_session_history",
+  "List past sessions with filtering (status, date range, limit) and per-session tool call stats.",
+  {
+    status: z.enum(["active", "paused", "completed"]).optional().describe("Filter by session status"),
+    since: z.string().optional().describe("Only show sessions started after this ISO date"),
+    limit: z.number().int().min(1).max(50).optional().describe("Max sessions to return (default 10)"),
+  },
+  wrapTool("mm_session_history", (args) => handleMmSessionHistory(args as Parameters<typeof handleMmSessionHistory>[0]))
+);
+
 // --- Moltbook Tool Registration ---
 
 server.tool(
@@ -247,6 +287,7 @@ server.tool(
 
 function shutdown(): void {
   console.error("MoltMind shutting down");
+  pauseCurrentSession();
   closeDb();
   process.exit(0);
 }

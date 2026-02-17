@@ -21,6 +21,10 @@ let handleMmHandoffCreate: typeof import("../src/tools/mm_handoff_create.js").ha
 let handleMmHandoffLoad: typeof import("../src/tools/mm_handoff_load.js").handleMmHandoffLoad;
 let handleMmFeedback: typeof import("../src/tools/mm_feedback.js").handleMmFeedback;
 let handleMmMetrics: typeof import("../src/tools/mm_metrics.js").handleMmMetrics;
+let handleMmSessionSave: typeof import("../src/tools/mm_session_save.js").handleMmSessionSave;
+let handleMmSessionResume: typeof import("../src/tools/mm_session_resume.js").handleMmSessionResume;
+let handleMmSessionHistory: typeof import("../src/tools/mm_session_history.js").handleMmSessionHistory;
+let metricsModule: typeof import("../src/metrics.js");
 
 // Force embedding model to fail so tests don't download 22MB
 let embeddings: typeof import("../src/embeddings.js");
@@ -60,6 +64,15 @@ describe("MCP Tool Handlers", () => {
     handleMmFeedback = feedback.handleMmFeedback;
     const metrics = await import("../src/tools/mm_metrics.js");
     handleMmMetrics = metrics.handleMmMetrics;
+    const sessionSave = await import("../src/tools/mm_session_save.js");
+    handleMmSessionSave = sessionSave.handleMmSessionSave;
+    const sessionResume = await import("../src/tools/mm_session_resume.js");
+    handleMmSessionResume = sessionResume.handleMmSessionResume;
+    const sessionHistory = await import("../src/tools/mm_session_history.js");
+    handleMmSessionHistory = sessionHistory.handleMmSessionHistory;
+    metricsModule = await import("../src/metrics.js");
+    // Initialize metrics to create an active session
+    metricsModule.initMetrics();
   });
 
   afterEach(() => {
@@ -246,6 +259,85 @@ describe("MCP Tool Handlers", () => {
       assert.equal(result.success, true);
       assert.ok(result.adoption);
       assert.ok(result.health);
+    });
+  });
+
+  // --- mm_session_save ---
+  describe("mm_session_save", () => {
+    it("should save session state", async () => {
+      const result = await handleMmSessionSave({
+        summary: "Implemented session tracking",
+        goal: "Add session continuity",
+        actions_taken: ["Created tables", "Added tools"],
+        outcomes: ["All tests pass"],
+        where_left_off: "Ready to publish",
+        status: "paused",
+      });
+      assert.equal(result.success, true);
+      assert.equal(result.message, "Session saved");
+      const session = result.session as Record<string, unknown>;
+      assert.equal(session.status, "paused");
+      assert.equal(session.summary, "Implemented session tracking");
+    });
+
+    it("should mark session completed", async () => {
+      const result = await handleMmSessionSave({
+        summary: "Done",
+        status: "completed",
+      });
+      assert.equal(result.success, true);
+      assert.equal(result.message, "Session completed");
+    });
+  });
+
+  // --- mm_session_resume ---
+  describe("mm_session_resume", () => {
+    it("should return recent sessions", async () => {
+      // Save current session first
+      await handleMmSessionSave({
+        summary: "Test session",
+        status: "paused",
+      });
+
+      const result = await handleMmSessionResume({});
+      assert.equal(result.success, true);
+      assert.ok(Array.isArray(result.sessions));
+      assert.ok((result.sessions as unknown[]).length >= 1);
+    });
+
+    it("should return empty when no sessions exist (fresh db)", async () => {
+      // Pause current, then clear sessions table
+      await handleMmSessionSave({ status: "completed" });
+      const database = db.getDb();
+      database.prepare("DELETE FROM sessions").run();
+
+      const result = await handleMmSessionResume({});
+      assert.equal(result.success, true);
+      assert.equal((result.sessions as unknown[]).length, 0);
+    });
+  });
+
+  // --- mm_session_history ---
+  describe("mm_session_history", () => {
+    it("should list sessions with filtering", async () => {
+      const result = await handleMmSessionHistory({ status: "active" });
+      assert.equal(result.success, true);
+      assert.ok(Array.isArray(result.sessions));
+    });
+
+    it("should return per-session tool call stats", async () => {
+      // Store a memory to generate diagnostics
+      await handleMmStore({ title: "Test", content: "Content" });
+
+      const result = await handleMmSessionHistory({});
+      assert.equal(result.success, true);
+      const sessions = result.sessions as Array<Record<string, unknown>>;
+      assert.ok(sessions.length >= 1);
+      // The active session should have tool_calls from mm_store
+      const active = sessions.find((s) => s.status === "active");
+      if (active) {
+        assert.equal(typeof active.tool_calls, "number");
+      }
     });
   });
 });

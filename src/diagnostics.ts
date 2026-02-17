@@ -5,6 +5,7 @@ import {
   insertFeedback as insertFeedbackDb,
   getRecentFeedback as getRecentFeedbackDb,
 } from "./db.js";
+import { getCurrentSessionId } from "./metrics.js";
 
 interface ToolResult {
   content: Array<{ type: "text"; text: string }>;
@@ -15,13 +16,14 @@ export async function withDiagnostics(
   handler: () => Promise<ToolResult>
 ): Promise<ToolResult> {
   const start = performance.now();
+  const sessionId = getCurrentSessionId();
   try {
     const result = await handler();
-    insertDiagnostic(toolName, true, performance.now() - start, null);
+    insertDiagnostic(toolName, true, performance.now() - start, null, sessionId);
     return result;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    insertDiagnostic(toolName, false, performance.now() - start, msg);
+    insertDiagnostic(toolName, false, performance.now() - start, msg, sessionId);
     return {
       content: [{ type: "text" as const, text: JSON.stringify({ success: false, message: msg }) }],
     };

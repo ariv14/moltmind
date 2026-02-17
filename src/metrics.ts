@@ -2,13 +2,14 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import crypto from "node:crypto";
-import { getMetric, setMetric, getDiagnosticsSummary } from "./db.js";
+import { getMetric, setMetric, getDiagnosticsSummary, insertSession, updateSession, getActiveSession } from "./db.js";
 import { getHealthScore, getRecentFeedback } from "./diagnostics.js";
 
 const MOLTMIND_DIR = join(homedir(), ".moltmind");
 const INSTANCE_ID_PATH = join(MOLTMIND_DIR, "instance_id");
 
 let instanceId: string | null = null;
+let currentSessionId: string | null = null;
 const startTime = Date.now();
 
 function getOrCreateInstanceId(): string {
@@ -26,6 +27,21 @@ function getOrCreateInstanceId(): string {
   return instanceId;
 }
 
+export function getCurrentSessionId(): string | null {
+  return currentSessionId;
+}
+
+export function setCurrentSessionId(id: string): void {
+  currentSessionId = id;
+}
+
+export function pauseCurrentSession(): void {
+  if (currentSessionId) {
+    updateSession(currentSessionId, { status: "paused" });
+    currentSessionId = null;
+  }
+}
+
 export function initMetrics(): void {
   const id = getOrCreateInstanceId();
 
@@ -41,7 +57,12 @@ export function initMetrics(): void {
   // Update last_seen
   setMetric("last_seen", new Date().toISOString());
 
-  console.error(`MoltMind: instance ${id.slice(0, 8)}... session #${sessions + 1}`);
+  // Auto-create an active session
+  const sessionId = crypto.randomUUID();
+  insertSession(sessionId);
+  currentSessionId = sessionId;
+
+  console.error(`MoltMind: instance ${id.slice(0, 8)}... session #${sessions + 1} (sid: ${sessionId.slice(0, 8)})`);
 }
 
 export function recordToolCall(toolName: string, success: boolean): void {

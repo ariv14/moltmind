@@ -3,7 +3,7 @@ import { mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import crypto from "node:crypto";
-import type { Memory, MemoryType, MemoryTier, Handoff } from "./types.js";
+import type { Memory, MemoryType, MemoryTier, Handoff, Session, SessionStatus } from "./types.js";
 
 const GLOBAL_DIR = join(homedir(), ".moltmind");
 const GLOBAL_DB_PATH = join(GLOBAL_DIR, "memory.db");
@@ -131,10 +131,39 @@ function migrateV3(database: Database.Database): void {
   `);
 }
 
+function migrateV4(database: Database.Database): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS sessions (
+      id TEXT PRIMARY KEY,
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused','completed')),
+      summary TEXT,
+      goal TEXT,
+      actions_taken TEXT NOT NULL DEFAULT '[]',
+      outcomes TEXT NOT NULL DEFAULT '[]',
+      where_left_off TEXT,
+      started_at TEXT NOT NULL,
+      ended_at TEXT,
+      metadata TEXT NOT NULL DEFAULT '{}'
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
+    CREATE INDEX IF NOT EXISTS idx_sessions_started_at ON sessions(started_at);
+  `);
+
+  // Add session_id column to diagnostics table
+  const columns = database.prepare("PRAGMA table_info(diagnostics)").all() as Array<{ name: string }>;
+  const hasSessionId = columns.some((c) => c.name === "session_id");
+  if (!hasSessionId) {
+    database.exec("ALTER TABLE diagnostics ADD COLUMN session_id TEXT");
+    database.exec("CREATE INDEX IF NOT EXISTS idx_diagnostics_session_id ON diagnostics(session_id)");
+  }
+}
+
 const migrations: Array<(database: Database.Database) => void> = [
   migrateV1,
   migrateV2,
   migrateV3,
+  migrateV4,
 ];
 
 function migrate(database: Database.Database): void {
@@ -382,18 +411,20 @@ export function insertDiagnostic(
   toolName: string,
   success: boolean,
   latencyMs: number,
-  errorMessage: string | null
+  errorMessage: string | null,
+  sessionId: string | null = null
 ): void {
   const database = getDb();
   database.prepare(`
-    INSERT INTO diagnostics (id, tool_name, success, latency_ms, error_message, created_at)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO diagnostics (id, tool_name, success, latency_ms, error_message, session_id, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run(
     crypto.randomUUID(),
     toolName,
     success ? 1 : 0,
     latencyMs,
     errorMessage,
+    sessionId,
     new Date().toISOString(),
   );
 }
@@ -542,6 +573,141 @@ export function setMoltbookAuth(key: string, value: string): void {
 export function deleteMoltbookAuth(key: string): void {
   const database = getGlobalDb();
   database.prepare("DELETE FROM moltbook_auth WHERE key = ?").run(key);
+}
+
+// --- Sessions ---
+
+function rowToSession(row: Record<string, unknown>): Session {
+  return {
+    id: row.id as string,
+    status: row.status as SessionStatus,
+    summary: (row.summary as string) ?? null,
+    goal: (row.goal as string) ?? null,
+    actions_taken: JSON.parse(row.actions_taken as string) as string[],
+    outcomes: JSON.parse(row.outcomes as string) as string[],
+    where_left_off: (row.where_left_off as string) ?? null,
+    started_at: row.started_at as string,
+    ended_at: (row.ended_at as string) ?? null,
+    metadata: JSON.parse(row.metadata as string) as Record<string, unknown>,
+  };
+}
+
+export function insertSession(id: string): Session {
+  const database = getDb();
+  const now = new Date().toISOString();
+
+  database.prepare(`
+    INSERT INTO sessions (id, status, started_at)
+    VALUES (?, 'active', ?)
+  `).run(id, now);
+
+  const row = database.prepare("SELECT * FROM sessions WHERE id = ?").get(id) as Record<string, unknown>;
+  return rowToSession(row);
+}
+
+export function getSession(id: string): Session | null {
+  const database = getDb();
+  const row = database.prepare("SELECT * FROM sessions WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+  if (!row) return null;
+  return rowToSession(row);
+}
+
+export function getActiveSession(): Session | null {
+  const database = getDb();
+  const row = database.prepare("SELECT * FROM sessions WHERE status = 'active' ORDER BY started_at DESC LIMIT 1").get() as Record<string, unknown> | undefined;
+  if (!row) return null;
+  return rowToSession(row);
+}
+
+export function updateSession(id: string, updates: {
+  status?: SessionStatus;
+  summary?: string;
+  goal?: string;
+  actions_taken?: string[];
+  outcomes?: string[];
+  where_left_off?: string;
+  metadata?: Record<string, unknown>;
+}): Session | null {
+  const database = getDb();
+  const existing = database.prepare("SELECT id FROM sessions WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+  if (!existing) return null;
+
+  const fields: string[] = [];
+  const values: unknown[] = [];
+
+  if (updates.status !== undefined) { fields.push("status = ?"); values.push(updates.status); }
+  if (updates.summary !== undefined) { fields.push("summary = ?"); values.push(updates.summary); }
+  if (updates.goal !== undefined) { fields.push("goal = ?"); values.push(updates.goal); }
+  if (updates.actions_taken !== undefined) { fields.push("actions_taken = ?"); values.push(JSON.stringify(updates.actions_taken)); }
+  if (updates.outcomes !== undefined) { fields.push("outcomes = ?"); values.push(JSON.stringify(updates.outcomes)); }
+  if (updates.where_left_off !== undefined) { fields.push("where_left_off = ?"); values.push(updates.where_left_off); }
+  if (updates.metadata !== undefined) { fields.push("metadata = ?"); values.push(JSON.stringify(updates.metadata)); }
+
+  if (updates.status === "paused" || updates.status === "completed") {
+    fields.push("ended_at = ?");
+    values.push(new Date().toISOString());
+  }
+
+  if (fields.length === 0) return getSession(id);
+
+  values.push(id);
+  database.prepare(`UPDATE sessions SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+
+  return getSession(id);
+}
+
+export function listSessions(options: {
+  status?: SessionStatus;
+  limit?: number;
+  since?: string;
+}): Session[] {
+  const database = getDb();
+  const conditions: string[] = [];
+  const values: unknown[] = [];
+
+  if (options.status) {
+    conditions.push("status = ?");
+    values.push(options.status);
+  }
+  if (options.since) {
+    conditions.push("started_at >= ?");
+    values.push(options.since);
+  }
+
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const limit = options.limit ?? 10;
+  values.push(limit);
+
+  const rows = database.prepare(
+    `SELECT * FROM sessions ${where} ORDER BY started_at DESC LIMIT ?`
+  ).all(...values) as Record<string, unknown>[];
+
+  return rows.map(rowToSession);
+}
+
+export function getSessionDiagnostics(sessionId: string): {
+  total_calls: number;
+  errors: number;
+  by_tool: Record<string, { calls: number; errors: number }>;
+} {
+  const database = getDb();
+  const rows = database.prepare(
+    "SELECT tool_name, success FROM diagnostics WHERE session_id = ?"
+  ).all(sessionId) as Array<{ tool_name: string; success: number }>;
+
+  const byTool: Record<string, { calls: number; errors: number }> = {};
+  let totalCalls = 0;
+  let errors = 0;
+
+  for (const row of rows) {
+    totalCalls++;
+    if (!row.success) errors++;
+    if (!byTool[row.tool_name]) byTool[row.tool_name] = { calls: 0, errors: 0 };
+    byTool[row.tool_name].calls++;
+    if (!row.success) byTool[row.tool_name].errors++;
+  }
+
+  return { total_calls: totalCalls, errors, by_tool: byTool };
 }
 
 export function initProjectVault(): string {

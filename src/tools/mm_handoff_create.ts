@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { insertHandoff } from "../db.js";
+import { getCurrentSessionId } from "../metrics.js";
 
 export async function handleMmHandoffCreate(args: {
   goal: string;
@@ -18,7 +19,7 @@ export async function handleMmHandoffCreate(args: {
     known_unknowns: args.known_unknowns ?? [],
     artifacts: args.artifacts ?? [],
     stop_conditions: args.stop_conditions ?? [],
-    session_id: crypto.randomUUID(),
+    session_id: getCurrentSessionId() ?? crypto.randomUUID(),
   });
 
   return { success: true, handoff };

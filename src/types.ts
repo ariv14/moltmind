@@ -74,6 +74,21 @@ export interface MoltbookSubmolt {
   created_at: string;
 }
 
+export type SessionStatus = "active" | "paused" | "completed";
+
+export interface Session {
+  id: string;
+  status: SessionStatus;
+  summary: string | null;
+  goal: string | null;
+  actions_taken: string[];
+  outcomes: string[];
+  where_left_off: string | null;
+  started_at: string;
+  ended_at: string | null;
+  metadata: Record<string, unknown>;
+}
+
 export interface SearchResult {
   id: string;
   title: string;
