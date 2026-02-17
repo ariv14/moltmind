@@ -2,27 +2,21 @@
 
 Persistent semantic memory and session continuity for AI agents. One install, zero config, runs 100% locally.
 
-MoltMind is an [MCP](https://modelcontextprotocol.io) server that gives your AI agent long-term memory and session continuity. It stores learnings, decisions, error fixes, and handoff context across sessions using local SQLite and embeddings — no API keys, no cloud, no accounts needed.
+MoltMind is an [MCP](https://modelcontextprotocol.io) server that gives your AI agent long-term memory across sessions — storing learnings, decisions, error fixes, and handoff context using local SQLite and embeddings. No API keys, no cloud, no accounts needed.
 
 ## Quick Start
-
-Each setup below shows two options: **default** (14 memory + session tools) and **with moltbook** (adds 7 social tools for [moltbook.com](https://moltbook.com)).
 
 ### Claude Code
 
 ```bash
-# Default (memory + sessions)
 claude mcp add moltmind -- npx -y moltmind
-
-# With moltbook social
-claude mcp add moltmind -- npx -y moltmind --moltbook
 ```
 
-Restart Claude Code, then run `/mcp` to verify.
+Restart Claude Code, then run `/mcp` to verify. Add `--moltbook` for social features ([moltbook.com](https://moltbook.com)).
 
-### Cursor
+### Other Clients
 
-Add to `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project):
+Add to your client's MCP config file:
 
 ```json
 {
@@ -37,239 +31,102 @@ Add to `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project):
 
 With moltbook: `"args": ["-y", "moltmind", "--moltbook"]`
 
-### Windsurf
+| Client | Config file | Key |
+|--------|------------|-----|
+| Cursor | `~/.cursor/mcp.json` or `.cursor/mcp.json` | `mcpServers` |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` | `mcpServers` |
+| VS Code (Copilot) | `.vscode/mcp.json` | `servers` |
+| Cline | Settings > MCP Servers > Edit Config | `mcpServers` |
+| Codex CLI | `~/.codex/config.json` | `mcpServers` |
+| Any MCP client | Varies | `mcpServers` |
 
-Add to `~/.codeium/windsurf/mcp_config.json`:
+> **Note:** VS Code uses `"servers"` instead of `"mcpServers"` as the top-level key.
 
-```json
-{
-  "mcpServers": {
-    "moltmind": {
-      "command": "npx",
-      "args": ["-y", "moltmind"]
-    }
-  }
-}
-```
+### Upgrading
 
-With moltbook: `"args": ["-y", "moltmind", "--moltbook"]`
-
-### VS Code (GitHub Copilot)
-
-Add to `.vscode/mcp.json` in your project:
-
-```json
-{
-  "servers": {
-    "moltmind": {
-      "command": "npx",
-      "args": ["-y", "moltmind"]
-    }
-  }
-}
-```
-
-With moltbook: `"args": ["-y", "moltmind", "--moltbook"]`
-
-Or add to VS Code `settings.json` under `"mcp" > "servers"` with the same format.
-
-### Cline
-
-Add to Cline's MCP settings (Settings > MCP Servers > Edit Config):
-
-```json
-{
-  "mcpServers": {
-    "moltmind": {
-      "command": "npx",
-      "args": ["-y", "moltmind"]
-    }
-  }
-}
-```
-
-With moltbook: `"args": ["-y", "moltmind", "--moltbook"]`
-
-### OpenAI Codex CLI
+`npx -y moltmind` always fetches the latest version. If you have a stale global install:
 
 ```bash
-# Default
-codex --mcp-config '{"mcpServers":{"moltmind":{"command":"npx","args":["-y","moltmind"]}}}'
-
-# With moltbook
-codex --mcp-config '{"mcpServers":{"moltmind":{"command":"npx","args":["-y","moltmind","--moltbook"]}}}'
+npm uninstall -g moltmind   # then let npx handle it
 ```
-
-Or add to `~/.codex/config.json`:
-
-```json
-{
-  "mcpServers": {
-    "moltmind": {
-      "command": "npx",
-      "args": ["-y", "moltmind"]
-    }
-  }
-}
-```
-
-With moltbook: `"args": ["-y", "moltmind", "--moltbook"]`
-
-### Any MCP-compatible client
-
-MoltMind works with any client that supports the [Model Context Protocol](https://modelcontextprotocol.io). Point it at `npx -y moltmind` as a STDIO server:
-
-```json
-{
-  "mcpServers": {
-    "moltmind": {
-      "command": "npx",
-      "args": ["-y", "moltmind"]
-    }
-  }
-}
-```
-
-With moltbook: `"args": ["-y", "moltmind", "--moltbook"]`
 
 ## Tools
 
-MoltMind provides 14 core tools by default (21 with `--moltbook`):
+14 core tools by default, 21 with `--moltbook`:
 
 | Tool | Description |
 |------|-------------|
 | `mm_store` | Store a memory (learning, error fix, decision, plan, or raw note) |
-| `mm_recall` | Search memories using natural language — hybrid semantic + keyword search |
+| `mm_recall` | Search memories — hybrid semantic + keyword search |
 | `mm_read` | Read a specific memory by ID |
-| `mm_update` | Update title, content, tags, or type of an existing memory |
+| `mm_update` | Update an existing memory |
 | `mm_delete` | Archive a memory (soft delete) |
-| `mm_status` | Server health dashboard: DB stats, health score, uptime |
-| `mm_init` | Create a project-local memory vault in the current directory |
-| `mm_handoff_create` | Create a structured handoff for agent-to-agent context transfer |
-| `mm_handoff_load` | Load the most recent handoff to resume context |
-| `mm_session_save` | Save session summary, actions, outcomes, and where you left off |
-| `mm_session_resume` | Load recent sessions + latest handoff for context recovery |
-| `mm_session_history` | List past sessions with filtering and per-session tool call stats |
-| `mm_feedback` | Report bugs, request features, or flag friction |
-| `mm_metrics` | Full adoption and health metrics dashboard |
+| `mm_status` | Server health dashboard |
+| `mm_init` | Create a project-local memory vault |
+| `mm_handoff_create` | Structured handoff for agent-to-agent context transfer |
+| `mm_handoff_load` | Load the most recent handoff |
+| `mm_session_save` | Save session summary and where you left off |
+| `mm_session_resume` | Restore context from recent sessions |
+| `mm_session_history` | Browse past sessions with tool call stats |
+| `mm_feedback` | Report bugs or request features |
+| `mm_metrics` | Adoption and health metrics dashboard |
 
 ## How It Works
 
-### Memory Storage
-Memories are stored in a local SQLite database with full-text search (FTS5). Each memory has a type (`learning`, `error`, `decision`, `plan`, `raw`), tags, metadata, and a tier (`hot`, `warm`, `cold`, `archived`).
+**Memory & Search** — Memories are stored in local SQLite with FTS5. Each has a type (`learning`, `error`, `decision`, `plan`, `raw`), tags, and a tier (`hot`, `warm`, `cold`, `archived`). `mm_recall` runs hybrid search: semantic similarity (0.7 weight) via a local [MiniLM-L6-v2](https://huggingface.co/Xenova/all-MiniLM-L6-v2) embedding model plus FTS5 keyword matching (0.3 weight). If the embedding model isn't available, it falls back to keyword-only.
 
-### Hybrid Search
-When you use `mm_recall`, MoltMind runs two searches in parallel:
-- **Semantic search** (weight: 0.7) — embeds your query with a local transformer model and finds similar memories by meaning
-- **Keyword search** (weight: 0.3) — uses SQLite FTS5 for exact and partial word matches
+**Sessions & Handoffs** — Sessions are auto-created on startup and auto-paused on shutdown. `mm_session_save` captures what happened and where you left off; `mm_session_resume` restores full context. `mm_handoff_create` structures goal/state/next-action for agent-to-agent transfers. All tool calls are tagged with session IDs for traceability.
 
-Results are merged, deduplicated, and ranked by combined score. If the embedding model isn't available, it falls back to keyword-only search.
+**Diagnostics** — Every tool call is logged locally with latency and success/failure. `mm_status` shows health score, `mm_metrics` shows per-tool usage stats, error rates, and token savings. All data stays on your machine.
 
-### Local Embeddings
-MoltMind uses [Xenova/all-MiniLM-L6-v2](https://huggingface.co/Xenova/all-MiniLM-L6-v2) (~22MB) to generate 384-dimensional embeddings. The model downloads automatically on first use and is cached at `~/.moltmind/models/`.
+## Free vs Pro
 
-### Memory Tiers
-- **hot** — actively used, high relevance
-- **warm** — less frequently accessed
-- **cold** — rarely accessed but retained
-- **archived** — soft-deleted, excluded from search
+| | Free | Pro |
+|--|------|-----|
+| Stores per day | 20 | Unlimited |
+| Total memories | 200 | Unlimited |
+| Search | Unlimited | Unlimited |
+| Session tools | Unlimited | Unlimited |
+| Vector search | Brute-force | Zvec ANN (auto) |
 
-### Handoffs
-`mm_handoff_create` captures structured context (goal, current state, next action, constraints, unknowns, artifacts, stop conditions) so a future session or different agent can pick up exactly where you left off.
+Upgrade: `npx moltmind --upgrade`
 
-### Session Continuity
-MoltMind automatically tracks sessions across agent restarts:
-- **Auto-created** on server startup — every session gets a unique ID
-- **Auto-paused** on shutdown (SIGINT/SIGTERM) — no data lost on disconnect
-- **`mm_session_save`** — save what happened, what was accomplished, and where you left off
-- **`mm_session_resume`** — load recent sessions and the latest handoff to restore context
-- **`mm_session_history`** — browse past sessions with per-session tool call stats
+## Token Cost
 
-All diagnostics are tagged with the current session ID, so you can see exactly what tools were called in each session.
+MCP tools add overhead because descriptions are sent with every request. MoltMind pays for itself quickly:
 
-### Diagnostics & Metrics
-Every tool call is logged locally with latency and success/failure. `mm_status` shows a health score, and `mm_metrics` provides a full dashboard of adoption data, per-tool usage stats, error rates, and token savings estimates. All data stays on your machine.
+| Mode | Overhead per request |
+|------|---------------------|
+| Default (14 tools) | ~500 tokens |
+| + Moltbook (21 tools) | ~1,000 tokens |
+| With prompt caching | ~50 tokens |
+
+### Session resume vs cold start
+
+Without MoltMind, re-exploring a codebase costs ~8,000 tokens per session. `mm_session_resume` restores context in ~325 tokens.
+
+| Scenario | Without | With MoltMind | Savings |
+|----------|---------|---------------|---------|
+| Single resume | ~8,000 | ~825 | 90% |
+| 5-session project | ~40,000 | ~7,500 | 81% |
+| 20-session project | ~160,000 | ~40,200 | 75% |
+
+Run `npm run benchmark` for latency measurements and projected savings. See [RUNBOOK.md](RUNBOOK.md) for detailed results.
 
 ## Data Storage
 
 | Path | Purpose |
 |------|---------|
 | `~/.moltmind/memory.db` | Global memory vault |
-| `./.moltmind/memory.db` | Project-local vault (created by `mm_init`) |
-| `~/.moltmind/models/` | Cached embedding model |
+| `./.moltmind/memory.db` | Project-local vault (via `mm_init`) |
+| `~/.moltmind/models/` | Cached embedding model (~22MB) |
 | `~/.moltmind/instance_id` | Anonymous instance identifier |
-
-## Token Cost
-
-MCP tools add token overhead because their descriptions are sent with every LLM request. MoltMind is designed to pay for itself quickly:
-
-### Overhead
-
-| Mode | Tools | Overhead per request |
-|------|-------|---------------------|
-| Default (memory + sessions) | 14 | ~500 tokens |
-| + Moltbook social (`--moltbook`) | 21 | ~1,000 tokens |
-| Default + prompt caching | 14 | ~50 tokens |
-
-Most LLM providers (Claude, GPT-4) cache tool descriptions after the first request, reducing real overhead by ~90%.
-
-### ROI: session resume vs cold start
-
-Without MoltMind, an agent re-exploring a codebase from scratch costs **~8,000 tokens** per session. MoltMind's `mm_session_resume` restores full context in **~325 tokens** — a 96% reduction.
-
-| Scenario | Without MoltMind | With MoltMind | Savings |
-|----------|-----------------|---------------|---------|
-| Single session resume | ~8,000 tokens | ~825 tokens | 90% |
-| 5-session project | ~40,000 tokens | ~7,500 tokens | 81% |
-| 20-session project | ~160,000 tokens | ~40,200 tokens | 75% |
-
-The tool overhead pays for itself after a single session resume.
-
-### Built-in tracking
-
-MoltMind tracks token savings automatically. Run `mm_metrics` to see your cumulative savings:
-
-```
-Token Savings (estimated):
-  Sessions tracked: 15
-  Cold starts avoided: 12 (saved ~92,100 tokens)
-  Mode: default (add --moltbook for social tools)
-```
-
-### Benchmark
-
-Run the built-in benchmark to see projected savings for your usage pattern:
-
-```bash
-npm run benchmark
-```
-
-## Architecture
-
-```
-Agent (Claude Code / Cursor / any MCP client)
-  │
-  ▼ (STDIO JSON-RPC)
-┌─────────────────────────────────────┐
-│  MCP Server (src/index.ts)          │
-│  14-21 tools with zod validation    │
-│  withDiagnostics() on every call    │
-├─────────────────────────────────────┤
-│  Embeddings        │  Diagnostics   │
-│  MiniLM-L6-v2      │  Health score  │
-│  384-dim vectors    │  Feedback      │
-│  Graceful fallback  │  Metrics       │
-├─────────────────────────────────────┤
-│  SQLite + WAL + FTS5                │
-│  Schema v5 with migrations          │
-└─────────────────────────────────────┘
-```
 
 ## Requirements
 
 - Node.js 18+
 - No API keys required
-- No internet required after first embedding model download
+- No internet after first embedding model download
 
 ## License
 

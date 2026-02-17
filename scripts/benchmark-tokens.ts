@@ -1,22 +1,173 @@
 #!/usr/bin/env npx tsx
 
 /**
- * Token Cost Benchmark for MoltMind
+ * MoltMind Benchmark — Latency + Token Cost
  *
- * Simulates 3 scenarios with pre-calculated estimates (no actual LLM calls):
- * 1. Single cold start: with vs without MoltMind
- * 2. 5-session project: cumulative savings
- * 3. With prompt caching: real-world cost reduction
+ * Measures real DB performance (store, keyword search, vector search)
+ * and projects token cost savings across usage scenarios.
  *
  * Run: npm run benchmark
  */
 
-// Constants (matching token_estimator.ts)
+import { performance } from "node:perf_hooks";
+import { mkdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import crypto from "node:crypto";
+
+// Token cost constants (matching token_estimator.ts)
 const TOOL_OVERHEAD_DEFAULT = 500;
 const TOOL_OVERHEAD_MOLTBOOK = 1000;
 const COLD_START_COST = 8000;
 const RESUME_COST = 325;
-const PROMPT_CACHE_DISCOUNT = 0.9; // 90% cheaper with caching
+const PROMPT_CACHE_DISCOUNT = 0.9;
+
+const MEMORY_COUNT = 50;
+const SEARCH_ITERATIONS = 20;
+const EMBEDDING_DIM = 384;
+
+// --- Latency Benchmark ---
+
+function generateSyntheticEmbedding(): Buffer {
+  const arr = new Float32Array(EMBEDDING_DIM);
+  for (let i = 0; i < EMBEDDING_DIM; i++) {
+    arr[i] = Math.random() * 2 - 1;
+  }
+  // Normalize
+  let norm = 0;
+  for (let i = 0; i < EMBEDDING_DIM; i++) norm += arr[i] * arr[i];
+  norm = Math.sqrt(norm);
+  for (let i = 0; i < EMBEDDING_DIM; i++) arr[i] /= norm;
+  return Buffer.from(arr.buffer);
+}
+
+function percentile(sorted: number[], p: number): number {
+  const idx = Math.ceil((p / 100) * sorted.length) - 1;
+  return sorted[Math.max(0, idx)];
+}
+
+function formatMs(ms: number): string {
+  if (ms < 1) return `${(ms * 1000).toFixed(0)}µs`;
+  if (ms < 10) return `${ms.toFixed(2)}ms`;
+  return `${ms.toFixed(1)}ms`;
+}
+
+async function runLatencyBenchmark(): Promise<void> {
+  // Create temp directory for isolated benchmark
+  const tmpDir = join(tmpdir(), `moltmind-bench-${crypto.randomUUID().slice(0, 8)}`);
+  mkdirSync(join(tmpDir, ".moltmind"), { recursive: true });
+
+  // We need to set env/cwd to use the temp vault
+  const originalCwd = process.cwd();
+  process.chdir(tmpDir);
+
+  try {
+    // Dynamic import after chdir so db.ts picks up the right path
+    const { insertMemory, searchMemoriesFTS, getAllMemories, closeDb } = await import("../src/db.js");
+    const { BruteForceStore, initVectorStore } = await import("../src/vector_store.js");
+
+    // Initialize project vault by triggering DB creation
+    const { initProjectVault } = await import("../src/db.js");
+    initProjectVault();
+
+    const storeTimes: number[] = [];
+    const memoryIds: string[] = [];
+    const embeddings: Map<string, Float32Array> = new Map();
+
+    // --- Store benchmark ---
+    for (let i = 0; i < MEMORY_COUNT; i++) {
+      const embedding = generateSyntheticEmbedding();
+      const start = performance.now();
+      const mem = insertMemory({
+        type: "learning",
+        title: `Benchmark memory ${i}: ${crypto.randomUUID().slice(0, 8)}`,
+        content: `This is benchmark content for memory ${i}. It contains enough text to be realistic. Topics include TypeScript patterns, database optimization, and API design. Random seed: ${Math.random()}.`,
+        tags: ["benchmark", `group-${i % 5}`],
+        metadata: { index: i },
+        embedding,
+        tier: "hot",
+      });
+      storeTimes.push(performance.now() - start);
+      memoryIds.push(mem.id);
+      embeddings.set(mem.id, new Float32Array(embedding.buffer, embedding.byteOffset, EMBEDDING_DIM));
+    }
+
+    // --- FTS search benchmark ---
+    const ftsQueries = [
+      "TypeScript patterns",
+      "database optimization",
+      "API design",
+      "benchmark content",
+      "memory",
+    ];
+    const ftsTimes: number[] = [];
+    for (let i = 0; i < SEARCH_ITERATIONS; i++) {
+      const query = ftsQueries[i % ftsQueries.length];
+      const start = performance.now();
+      searchMemoriesFTS(query, 10);
+      ftsTimes.push(performance.now() - start);
+    }
+
+    // --- Vector search benchmark ---
+    const bruteStore = new BruteForceStore();
+    initVectorStore(bruteStore);
+
+    const vectorTimes: number[] = [];
+    for (let i = 0; i < SEARCH_ITERATIONS; i++) {
+      const queryEmbedding = generateSyntheticEmbedding();
+      const queryVec = new Float32Array(queryEmbedding.buffer, queryEmbedding.byteOffset, EMBEDDING_DIM);
+      const start = performance.now();
+      bruteStore.search(queryVec, 10);
+      vectorTimes.push(performance.now() - start);
+    }
+
+    // --- Print results ---
+    storeTimes.sort((a, b) => a - b);
+    ftsTimes.sort((a, b) => a - b);
+    vectorTimes.sort((a, b) => a - b);
+
+    const avg = (arr: number[]) => arr.reduce((s, v) => s + v, 0) / arr.length;
+
+    console.error(`\n## Latency (${MEMORY_COUNT} memories, SQLite + FTS5)\n`);
+    console.error(`| Operation | Avg | p50 | p95 | Max |`);
+    console.error(`|-----------|-----|-----|-----|-----|`);
+    console.error(
+      `| Store memory | ${formatMs(avg(storeTimes))} | ${formatMs(percentile(storeTimes, 50))} | ${formatMs(percentile(storeTimes, 95))} | ${formatMs(storeTimes[storeTimes.length - 1])} |`
+    );
+    console.error(
+      `| Keyword search (FTS5) | ${formatMs(avg(ftsTimes))} | ${formatMs(percentile(ftsTimes, 50))} | ${formatMs(percentile(ftsTimes, 95))} | ${formatMs(ftsTimes[ftsTimes.length - 1])} |`
+    );
+    console.error(
+      `| Vector search (brute-force) | ${formatMs(avg(vectorTimes))} | ${formatMs(percentile(vectorTimes, 50))} | ${formatMs(percentile(vectorTimes, 95))} | ${formatMs(vectorTimes[vectorTimes.length - 1])} |`
+    );
+    console.error("");
+
+    closeDb();
+  } finally {
+    process.chdir(originalCwd);
+    try {
+      rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      // best effort cleanup
+    }
+  }
+}
+
+// --- Free vs Pro comparison ---
+
+function printFreeVsPro(): void {
+  console.error("## Free vs Pro\n");
+  console.error("| Feature | Free | Pro |");
+  console.error("|---------|------|-----|");
+  console.error("| Stores per day | 20 | Unlimited |");
+  console.error("| Total memories | 200 | Unlimited |");
+  console.error("| Vector search | Brute-force | Zvec ANN (auto) |");
+  console.error("| Recall/search | Unlimited | Unlimited |");
+  console.error("| Session tools | Unlimited | Unlimited |");
+  console.error("");
+}
+
+// --- Token cost scenarios ---
 
 interface Scenario {
   name: string;
@@ -99,9 +250,7 @@ function formatTokens(n: number): string {
   return `~${n}`;
 }
 
-function printResults(scenarios: Scenario[]): void {
-  console.error("# MoltMind Token Cost Benchmark\n");
-
+function printTokenResults(scenarios: Scenario[]): void {
   console.error("## Tool Description Overhead\n");
   console.error(`| Mode | Tools | Overhead per request |`);
   console.error(`|------|-------|---------------------|`);
@@ -110,7 +259,7 @@ function printResults(scenarios: Scenario[]): void {
   console.error(`| Default + prompt caching | 14 | ${formatTokens(Math.round(TOOL_OVERHEAD_DEFAULT * (1 - PROMPT_CACHE_DISCOUNT)))} tokens |`);
   console.error("");
 
-  console.error("## Scenario Comparison\n");
+  console.error("## Token Cost Scenarios\n");
   console.error(`| Scenario | Without MoltMind | Default (14 tools) | + Moltbook (21 tools) | With prompt caching | Savings vs no MoltMind |`);
   console.error(`|----------|-----------------|-------------------|---------------------|--------------------|-----------------------|`);
 
@@ -129,8 +278,21 @@ function printResults(scenarios: Scenario[]): void {
   console.error(`- Tool description overhead is ${formatTokens(TOOL_OVERHEAD_DEFAULT)} tokens (default) — paid once per request`);
   console.error(`- With prompt caching (standard in Claude, GPT-4), real overhead drops to ${formatTokens(Math.round(TOOL_OVERHEAD_DEFAULT * (1 - PROMPT_CACHE_DISCOUNT)))} tokens`);
   console.error(`- The overhead pays for itself after one session resume`);
-  console.error(`- Use \`--moltbook\` flag only when you need social features`);
 }
 
-const scenarios = runScenarios();
-printResults(scenarios);
+// --- Main ---
+
+async function main(): Promise<void> {
+  console.error("# MoltMind Benchmark\n");
+
+  await runLatencyBenchmark();
+  printFreeVsPro();
+
+  const scenarios = runScenarios();
+  printTokenResults(scenarios);
+}
+
+main().catch((err) => {
+  console.error("Benchmark failed:", err);
+  process.exit(1);
+});
