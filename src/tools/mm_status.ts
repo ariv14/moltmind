@@ -11,7 +11,7 @@ export async function handleMmStatus(): Promise<Record<string, unknown>> {
 
   return {
     success: true,
-    version: "0.4.0",
+    version: "0.4.1",
     db_stats: stats,
     health_score: healthScore,
     embedding_model_ready: isModelReady(),

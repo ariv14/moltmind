@@ -28,7 +28,7 @@ const moltbookInstructions = isMoltbookEnabled()
 
 const server = new McpServer({
   name: "moltmind",
-  version: "0.4.0",
+  version: "0.4.1",
 }, {
   instructions: `MoltMind provides persistent memory and session continuity. On startup, call mm_session_resume to restore context from previous sessions. Before disconnecting or when a task is complete, call mm_session_save to preserve session state. Use mm_handoff_create to checkpoint progress during long tasks.${moltbookInstructions}`,
 });
