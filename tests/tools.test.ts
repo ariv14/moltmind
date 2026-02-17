@@ -181,7 +181,7 @@ describe("MCP Tool Handlers", () => {
     it("should return server status", async () => {
       const result = await handleMmStatus();
       assert.equal(result.success, true);
-      assert.equal(result.version, "0.3.1");
+      assert.equal(result.version, "0.3.2");
       assert.ok(result.db_stats);
       assert.equal(typeof result.health_score, "number");
       assert.equal(typeof result.uptime_seconds, "number");
@@ -287,6 +287,48 @@ describe("MCP Tool Handlers", () => {
       });
       assert.equal(result.success, true);
       assert.equal(result.message, "Session completed");
+    });
+
+    it("should auto-populate actions_taken from diagnostics when not provided", async () => {
+      // Generate some diagnostics by calling tools
+      const sessionId = metricsModule.getCurrentSessionId();
+      assert.ok(sessionId);
+      db.insertDiagnostic("mm_store", true, 10, null, sessionId);
+      db.insertDiagnostic("mm_store", true, 12, null, sessionId);
+      db.insertDiagnostic("mm_recall", true, 8, null, sessionId);
+      db.insertDiagnostic("mm_recall", false, 5, "error", sessionId);
+
+      const result = await handleMmSessionSave({
+        summary: "Test auto-populate",
+        status: "paused",
+      });
+      assert.equal(result.success, true);
+      const session = result.session as Record<string, unknown>;
+      const actions = session.actions_taken as string[];
+      assert.ok(Array.isArray(actions));
+      assert.ok(actions.length >= 2);
+      // Should contain tool names with call counts
+      const storeAction = actions.find((a: string) => a.startsWith("mm_store"));
+      assert.ok(storeAction);
+      assert.ok(storeAction.includes("2 calls"));
+      const recallAction = actions.find((a: string) => a.startsWith("mm_recall"));
+      assert.ok(recallAction);
+      assert.ok(recallAction.includes("1 failed"));
+    });
+
+    it("should use provided actions_taken instead of auto-populating", async () => {
+      const sessionId = metricsModule.getCurrentSessionId();
+      db.insertDiagnostic("mm_store", true, 10, null, sessionId);
+
+      const result = await handleMmSessionSave({
+        summary: "Manual actions",
+        actions_taken: ["Did thing A", "Did thing B"],
+        status: "paused",
+      });
+      assert.equal(result.success, true);
+      const session = result.session as Record<string, unknown>;
+      const actions = session.actions_taken as string[];
+      assert.deepEqual(actions, ["Did thing A", "Did thing B"]);
     });
   });
 

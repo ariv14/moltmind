@@ -1,6 +1,16 @@
-import { updateSession, getSession } from "../db.js";
+import { updateSession, getSession, getSessionDiagnostics } from "../db.js";
 import { getCurrentSessionId } from "../metrics.js";
 import type { SessionStatus } from "../types.js";
+
+function buildActionsFromDiagnostics(sessionId: string): string[] {
+  const diag = getSessionDiagnostics(sessionId);
+  const actions: string[] = [];
+  for (const [tool, stats] of Object.entries(diag.by_tool)) {
+    const suffix = stats.errors > 0 ? ` (${stats.errors} failed)` : "";
+    actions.push(`${tool}: ${stats.calls} call${stats.calls === 1 ? "" : "s"}${suffix}`);
+  }
+  return actions;
+}
 
 export async function handleMmSessionSave(args: {
   summary?: string;
@@ -23,11 +33,16 @@ export async function handleMmSessionSave(args: {
 
   const status: SessionStatus = args.status ?? "paused";
 
+  // Auto-populate actions_taken from diagnostics if not provided
+  const actionsTaken = (args.actions_taken && args.actions_taken.length > 0)
+    ? args.actions_taken
+    : buildActionsFromDiagnostics(sessionId);
+
   const updated = updateSession(sessionId, {
     status,
     summary: args.summary,
     goal: args.goal,
-    actions_taken: args.actions_taken,
+    actions_taken: actionsTaken,
     outcomes: args.outcomes,
     where_left_off: args.where_left_off,
     metadata: args.metadata,

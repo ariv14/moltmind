@@ -3,9 +3,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { closeDb } from "./db.js";
+import { closeDb, getSession, getSessionDiagnostics, updateSession, listSessions, getLatestHandoff } from "./db.js";
 import { withDiagnostics } from "./diagnostics.js";
-import { initMetrics, recordToolCall, pauseCurrentSession } from "./metrics.js";
+import { initMetrics, recordToolCall, pauseCurrentSession, getCurrentSessionId } from "./metrics.js";
 import { handleMmStore } from "./tools/mm_store.js";
 import { handleMmRecall } from "./tools/mm_recall.js";
 import { handleMmRead } from "./tools/mm_read.js";
@@ -30,7 +30,9 @@ import { handleMbSubmolt } from "./tools/mb_submolt.js";
 
 const server = new McpServer({
   name: "moltmind",
-  version: "0.3.1",
+  version: "0.3.2",
+}, {
+  instructions: "MoltMind provides persistent memory and session continuity. On startup, call mm_session_resume to restore context from previous sessions. Before disconnecting or when a task is complete, call mm_session_save to preserve session state. Use mm_handoff_create to checkpoint progress during long tasks.",
 });
 
 function wrapTool(
@@ -287,6 +289,31 @@ server.tool(
 
 function shutdown(): void {
   console.error("MoltMind shutting down");
+
+  // Auto-save minimal session record if agent didn't call mm_session_save
+  try {
+    const sessionId = getCurrentSessionId();
+    if (sessionId) {
+      const session = getSession(sessionId);
+      if (session && !session.summary) {
+        const diag = getSessionDiagnostics(sessionId);
+        const actions: string[] = [];
+        for (const [tool, stats] of Object.entries(diag.by_tool)) {
+          const suffix = stats.errors > 0 ? ` (${stats.errors} failed)` : "";
+          actions.push(`${tool}: ${stats.calls} call${stats.calls === 1 ? "" : "s"}${suffix}`);
+        }
+        if (actions.length > 0) {
+          updateSession(sessionId, {
+            actions_taken: actions,
+            where_left_off: "Session ended without explicit save — actions auto-recorded from diagnostics",
+          });
+        }
+      }
+    }
+  } catch {
+    // Don't let auto-save failure prevent clean shutdown
+  }
+
   pauseCurrentSession();
   closeDb();
   process.exit(0);
@@ -297,6 +324,23 @@ async function main(): Promise<void> {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
+
+  // Send a logging reminder when the client completes initialization
+  server.server.oninitialized = () => {
+    try {
+      const previousSessions = listSessions({ limit: 1 });
+      const latestHandoff = getLatestHandoff();
+      if (previousSessions.length > 0 || latestHandoff) {
+        server.server.sendLoggingMessage({
+          level: "info",
+          logger: "moltmind",
+          data: "Previous session data detected. Call mm_session_resume to restore context from your last session.",
+        }).catch(() => { /* client may not support logging */ });
+      }
+    } catch {
+      // Non-critical — don't block startup
+    }
+  };
 
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
