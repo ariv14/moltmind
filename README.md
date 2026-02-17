@@ -1,8 +1,8 @@
 # MoltMind
 
-Persistent semantic memory for AI agents. One install, zero config, runs 100% locally.
+Persistent semantic memory and session continuity for AI agents. One install, zero config, runs 100% locally.
 
-MoltMind is an [MCP](https://modelcontextprotocol.io) server that gives your AI agent long-term memory. It stores learnings, decisions, error fixes, and handoff context across sessions using local SQLite and embeddings — no API keys, no cloud, no accounts needed.
+MoltMind is an [MCP](https://modelcontextprotocol.io) server that gives your AI agent long-term memory and session continuity. It stores learnings, decisions, error fixes, and handoff context across sessions using local SQLite and embeddings — no API keys, no cloud, no accounts needed.
 
 ## Quick Start
 
@@ -28,7 +28,7 @@ Add to your MCP config:
 
 ## Tools
 
-MoltMind provides 11 tools that your agent can use:
+MoltMind provides 14 tools that your agent can use:
 
 | Tool | Description |
 |------|-------------|
@@ -41,6 +41,9 @@ MoltMind provides 11 tools that your agent can use:
 | `mm_init` | Create a project-local memory vault in the current directory |
 | `mm_handoff_create` | Create a structured handoff for agent-to-agent context transfer |
 | `mm_handoff_load` | Load the most recent handoff to resume context |
+| `mm_session_save` | Save session summary, actions, outcomes, and where you left off |
+| `mm_session_resume` | Load recent sessions + latest handoff for context recovery |
+| `mm_session_history` | List past sessions with filtering and per-session tool call stats |
 | `mm_feedback` | Report bugs, request features, or flag friction |
 | `mm_metrics` | Full adoption and health metrics dashboard |
 
@@ -68,6 +71,16 @@ MoltMind uses [Xenova/all-MiniLM-L6-v2](https://huggingface.co/Xenova/all-MiniLM
 ### Handoffs
 `mm_handoff_create` captures structured context (goal, current state, next action, constraints, unknowns, artifacts, stop conditions) so a future session or different agent can pick up exactly where you left off.
 
+### Session Continuity
+MoltMind automatically tracks sessions across agent restarts:
+- **Auto-created** on server startup — every session gets a unique ID
+- **Auto-paused** on shutdown (SIGINT/SIGTERM) — no data lost on disconnect
+- **`mm_session_save`** — save what happened, what was accomplished, and where you left off
+- **`mm_session_resume`** — load recent sessions and the latest handoff to restore context
+- **`mm_session_history`** — browse past sessions with per-session tool call stats
+
+All diagnostics are tagged with the current session ID, so you can see exactly what tools were called in each session.
+
 ### Diagnostics & Metrics
 Every tool call is logged locally with latency and success/failure. `mm_status` shows a health score, and `mm_metrics` provides a full dashboard of adoption data, per-tool usage stats, and error rates. All data stays on your machine.
 
@@ -88,7 +101,7 @@ Agent (Claude Code / Cursor / any MCP client)
   ▼ (STDIO JSON-RPC)
 ┌─────────────────────────────────────┐
 │  MCP Server (src/index.ts)          │
-│  11 tools with zod validation       │
+│  14 tools with zod validation       │
 │  withDiagnostics() on every call    │
 ├─────────────────────────────────────┤
 │  Embeddings        │  Diagnostics   │
@@ -97,7 +110,7 @@ Agent (Claude Code / Cursor / any MCP client)
 │  Graceful fallback  │  Metrics       │
 ├─────────────────────────────────────┤
 │  SQLite + WAL + FTS5                │
-│  Schema v2 with migrations          │
+│  Schema v4 with migrations          │
 └─────────────────────────────────────┘
 ```
 
