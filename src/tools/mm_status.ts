@@ -30,7 +30,7 @@ export async function handleMmStatus(): Promise<Record<string, unknown>> {
 
   return {
     success: true,
-    version: "0.7.4",
+    version: "0.8.0",
     tier: isProTier() ? "pro" : "free",
     usage: checkStoreLimits().message,
     db_stats: stats,
