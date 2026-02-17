@@ -60,7 +60,7 @@ src/
 ├── config.ts         # --moltbook flag parsing, isToolEnabled(), getToolMode().
 ├── db.ts             # SQLite schema, migrations, all database CRUD functions. Singleton pattern.
 ├── embeddings.ts     # Model loading, embedding generation, cosine similarity, semantic search.
-├── license.ts        # RSA license validation, free tier limits (20/day, 200 total), machine-locked keys.
+├── license.ts        # RSA license validation, admin keys, heartbeat, free tier limits (20/day, 200 total).
 ├── vector_store.ts   # VectorStore interface, BruteForceStore, cached singleton (initVectorStore/getVectorStore).
 ├── vector_store_zvec.ts # ZvecStore wrapping @moltmind/zvec-native, migration helper.
 ├── diagnostics.ts    # withDiagnostics() wrapper, health score, diagnostics table, feedback table, token tracking.
@@ -83,7 +83,12 @@ src/
     ├── mm_feedback.ts
     └── mm_metrics.ts
 scripts/
-└── generate-license.ts  # RSA key generator (NOT published to npm). Signs instance_id with private key.
+└── generate-license.ts  # RSA key generator (NOT published to npm). Signs instance_id with --admin flag support.
+worker/                   # Cloudflare Worker for license checkout, webhook, heartbeat (NOT published to npm).
+├── src/index.ts         # All routes: /checkout, /api/webhook/polar, /api/license/:token, /api/heartbeat
+├── wrangler.toml        # Config + KV bindings + route patterns
+├── tsconfig.json
+└── package.json
 release_instructions.md   # Full release checklist — when to publish, version bumping, post-release verification.
 tests/
 ├── db.test.ts
@@ -109,12 +114,12 @@ tests/
 | `mm_read` | Read a single memory by ID (updates accessed_at and access_count) |
 | `mm_update` | Update specific fields of an existing memory |
 | `mm_delete` | Soft-delete a memory (sets tier to 'archived') |
-| `mm_status` | Server health: DB stats, embedding model status, health score, uptime, tier (free/pro), usage |
+| `mm_status` | Server health: DB stats, embedding model status, health score, uptime, tier (free/pro), usage, active sessions, claims, recent events |
 | `mm_init` | Create a project-local vault in `.moltmind/` of current directory |
-| `mm_handoff_create` | Create a structured handoff document for agent-to-agent transitions |
+| `mm_handoff_create` | Create a structured handoff document for agent-to-agent transitions. Optional `claims` param for advisory resource locks |
 | `mm_handoff_load` | Load the most recent handoff to resume context |
-| `mm_session_save` | Save session summary, actions, outcomes, and where we left off. Marks session paused or completed |
-| `mm_session_resume` | Load recent sessions + latest handoff, return formatted summary for context recovery |
+| `mm_session_save` | Save session summary, actions, outcomes, and where we left off. Marks session paused or completed. Auto-releases claims |
+| `mm_session_resume` | Load recent sessions + latest handoff + concurrent session count + recent cross-session activity |
 | `mm_session_history` | List past sessions with filtering (status, date range, limit) and per-session tool call stats |
 | `mm_feedback` | Submit feedback (bug, feature_request, friction) about a specific tool |
 | `mm_metrics` | View real-time adoption metrics: sessions, tool usage, error rates, token savings |
@@ -127,6 +132,7 @@ tests/
 - Project vault location: `./.moltmind/memory.db` (created by `mm_init`)
 - Always create parent directories with `mkdirSync(path, { recursive: true })` before opening DB
 - Use `WAL` journal mode for better concurrent read performance
+- Set `busy_timeout = 3000` (3s) on every DB connection — required for multi-session coordination where multiple MCP server processes share the same SQLite file
 - Use parameterized queries — never interpolate values into SQL strings
 
 ### Migrations
@@ -141,9 +147,10 @@ tests/
 - v4 = sessions table + session_id column on diagnostics
 - v5 = token_estimates table
 - v6 = moltbook_posts table (duplicate post tracking for moltbook)
+- v7 = pid + last_heartbeat columns on sessions, session_events table, session_claims table (multi-session coordination)
 - This ensures existing users on older versions don't break when upgrading
 
-### Tables (v6 schema)
+### Tables (v7 schema)
 
 **memories** — core memory storage (v1)
 **handoffs** — agent-to-agent context transfer (v1)
@@ -178,7 +185,7 @@ CREATE TABLE IF NOT EXISTS metrics (
   updated_at TEXT NOT NULL
 );
 ```
-**sessions** — session lifecycle tracking (v4)
+**sessions** — session lifecycle tracking (v4, updated v7 with pid/heartbeat)
 ```sql
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
@@ -190,7 +197,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   where_left_off TEXT,
   started_at TEXT NOT NULL,
   ended_at TEXT,
-  metadata TEXT NOT NULL DEFAULT '{}'
+  metadata TEXT NOT NULL DEFAULT '{}',
+  pid INTEGER,           -- process ID for stale detection (v7)
+  last_heartbeat TEXT     -- ISO timestamp, updated every 30s (v7)
 );
 ```
 
@@ -217,6 +226,31 @@ CREATE TABLE IF NOT EXISTS moltbook_posts (
 );
 CREATE INDEX IF NOT EXISTS idx_moltbook_posts_content ON moltbook_posts(content_hash);
 CREATE INDEX IF NOT EXISTS idx_moltbook_posts_title ON moltbook_posts(title_hash);
+```
+
+**session_events** — cross-session awareness event log (v7)
+```sql
+CREATE TABLE IF NOT EXISTS session_events (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,  -- 'memory_stored', 'memory_updated', 'memory_archived', 'handoff_created', 'claim', 'release'
+  resource_id TEXT,          -- memory ID, handoff ID, or file path
+  summary TEXT,              -- human-readable description
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_session_events_created ON session_events(created_at);
+CREATE INDEX IF NOT EXISTS idx_session_events_type ON session_events(event_type);
+```
+
+**session_claims** — advisory locks for conflict avoidance (v7)
+```sql
+CREATE TABLE IF NOT EXISTS session_claims (
+  resource TEXT PRIMARY KEY,   -- what's being claimed (file path, "task:xyz", etc.)
+  session_id TEXT NOT NULL,    -- who holds the claim
+  pid INTEGER,                 -- for stale claim detection
+  claimed_at TEXT NOT NULL,
+  description TEXT             -- what the session is doing with it
+);
 ```
 
 ### Query Behavior
@@ -258,7 +292,7 @@ CREATE INDEX IF NOT EXISTS idx_moltbook_posts_title ON moltbook_posts(title_hash
 
 - By default, only 14 core `mm_*` tools are registered (~500 tokens overhead).
 - With `--moltbook` flag, 7 additional `mb_*` social tools are registered (~1,000 tokens total overhead).
-- With `--upgrade` flag, opens browser to license checkout page and exits (does not start MCP server).
+- With `--upgrade` flag, opens Polar checkout in browser, polls for license key, writes `~/.moltmind/license.key` on success, then exits (does not start MCP server).
 - `isMoltbookEnabled()` reads `process.argv` once and caches the result.
 - `isToolEnabled(toolName)` returns `false` for `mb_*` tools unless `--moltbook` is set.
 - In `src/index.ts`, moltbook tool imports are dynamic (`await import(...)`) inside `registerMoltbookTools()` — only loaded when `--moltbook` is passed.
@@ -274,22 +308,81 @@ CREATE INDEX IF NOT EXISTS idx_moltbook_posts_title ON moltbook_posts(title_hash
 
 ### Session Lifecycle (src/metrics.ts)
 
-- **Startup:** `initMetrics()` auto-creates an "active" session in the `sessions` table and stores the session ID in `currentSessionId`.
+- **Startup:** `initMetrics()` auto-creates an "active" session in the `sessions` table, stores the session ID in `currentSessionId`, registers the PID and initial heartbeat via `updateSessionHeartbeat()`, and runs `markStaleSessions()` to clean up crashed processes.
+- **Heartbeat:** A 30s `setInterval` in `main()` calls `heartbeat()` which updates `last_heartbeat` on the current session and marks stale sessions (heartbeat >60s old) as paused. Cleared in `shutdown()`.
 - **During session:** `withDiagnostics()` reads `getCurrentSessionId()` and passes it to `insertDiagnostic()` so all tool calls are tagged with the session.
-- **Shutdown:** `shutdown()` calls `pauseCurrentSession()` which marks the active session as "paused" with an `ended_at` timestamp before closing the DB.
+- **Shutdown:** `shutdown()` clears the heartbeat interval, releases all claims via `releaseAllClaims()`, calls `pauseCurrentSession()` which marks the active session as "paused" with an `ended_at` timestamp before closing the DB.
 - **Handoff linking:** `mm_handoff_create` uses `getCurrentSessionId()` instead of a random UUID, linking handoffs to the session that created them.
-- **Session save:** Agents can call `mm_session_save` to attach summary, actions_taken, outcomes, and where_left_off to the current session.
-- **Session resume:** `mm_session_resume` loads recent sessions + latest handoff so agents can restore context after a restart.
+- **Session save:** Agents can call `mm_session_save` to attach summary, actions_taken, outcomes, and where_left_off to the current session. Auto-releases claims on pause/completed.
+- **Session resume:** `mm_session_resume` loads recent sessions + latest handoff + concurrent session count + recent cross-session activity so agents can restore context after a restart.
 - **Session history:** `mm_session_history` lists past sessions with per-session tool call stats from the diagnostics table.
+
+### Multi-Session Coordination
+
+Multiple MCP server processes can run concurrently on the same machine (e.g., multiple Claude Code windows on the same project). Coordination is handled via shared SQLite tables with zero background overhead beyond the 30s heartbeat.
+
+#### Instance ID (Atomic Write)
+
+- `getOrCreateInstanceId()` in `src/metrics.ts` writes to a temp file then uses `renameSync()` for atomic creation — prevents TOCTOU race when multiple processes start simultaneously.
+
+#### Session Heartbeat & Stale Detection
+
+- `updateSessionHeartbeat(id, pid)` — sets `last_heartbeat` + `pid` on the sessions row.
+- `markStaleSessions(staleCutoffMs=60000)` — pauses active sessions with heartbeat >60s old and releases their claims.
+- `getActiveSessions()` — returns all sessions with status='active'.
+- `heartbeat()` — convenience function called every 30s, updates heartbeat and runs stale cleanup.
+
+#### Session Events (Cross-Session Awareness)
+
+- `logSessionEvent(sessionId, eventType, resourceId?, summary?)` — inserts into `session_events`.
+- `getRecentEvents(sinceIso, limit?)` — returns events after a timestamp.
+- Events are auto-logged by tool handlers:
+  - `mm_store` → `memory_stored` (with memory title)
+  - `mm_update` → `memory_updated`
+  - `mm_delete` → `memory_archived`
+  - `mm_handoff_create` → `handoff_created`
+  - Claims → `claim` / `release`
+- Surfaced in `mm_status` (last 5 min) and `mm_session_resume` (last 10 min).
+
+#### Advisory Claims (Conflict Avoidance)
+
+- `claimResource(sessionId, resource, pid, description?)` — INSERT OR REPLACE into `session_claims`. If resource is already claimed by a different active session, returns `{ success: false, held_by: sessionId }`.
+- `releaseResource(sessionId, resource)` — removes a specific claim.
+- `releaseAllClaims(sessionId)` — removes all claims for a session. Called on shutdown, session pause/complete, and stale cleanup.
+- `getActiveClaims()` — returns claims held by active sessions. Surfaced in `mm_status`.
+- **Semantics:** Advisory only — doesn't block writes. Agents check claims before acting and respect them voluntarily. Stale claims from crashed sessions are auto-released by `markStaleSessions()`.
+- **Usage:** Pass `claims: ["src/db.ts", "task:refactor"]` to `mm_handoff_create` to claim resources this session is working on.
 
 ### License System (src/license.ts)
 
 - **RSA-signed, machine-locked licenses.** The public key is embedded in `src/license.ts`; the private key stays at `~/.moltmind/license-private.pem` (never published).
 - License key format: `MMPRO-{instance_id_prefix_8chars}-{base64url-RSA-signature}`
-- `validateLicense()` reads `~/.moltmind/license.key` and `~/.moltmind/instance_id`, verifies the RSA signature against the embedded public key, and caches the result for the process lifetime.
+- Admin key format: `MMADMIN-{instance_id_prefix_8chars}-{base64url-RSA-signature}` (same RSA signing, different prefix)
+- `validateLicense()` checks `~/.moltmind/admin.key` FIRST, then `~/.moltmind/license.key`. Returns `{ valid, admin, message }`.
 - `_resetLicenseCache()` exported for testing — resets the cached validation result.
-- `isProTier()` returns `true` if the license is valid.
+- `isProTier()` returns `true` if any license (admin or pro) is valid.
+- `isAdminTier()` returns `true` only for admin licenses — used to bypass heartbeat.
 - `checkStoreLimits()` returns `{ allowed, message }` — checks Pro tier first, then total memories (200 cap), then daily stores (20 cap).
+
+### Admin License
+
+- File: `~/.moltmind/admin.key` (separate from `license.key`)
+- Generated via `scripts/generate-license.ts --admin <instance_id>`
+- Admin licenses **skip heartbeat entirely** — no network check, never expires
+- NOT published, NOT documented publicly — developer only
+- `admin.key` is excluded from npm tarball by `"files"` in package.json
+
+### Heartbeat (One-Machine Enforcement)
+
+- `checkHeartbeat()` in `src/license.ts` — called on every startup, non-blocking
+- Admin tier → skip entirely (return immediately)
+- Not Pro → skip
+- Throttled to once per 24 hours (reads `~/.moltmind/last_heartbeat` timestamp)
+- POST to `https://aidigitalcrew.com/api/heartbeat` with `{ instance_id, license_prefix }` (5s timeout)
+- `{ valid: true }` → write current timestamp to `~/.moltmind/last_heartbeat`
+- `{ valid: false }` → delete `~/.moltmind/license.key`, reset license cache, revert to free tier
+- Network error + last heartbeat < 7 days → grace period, stay Pro
+- Network error + last heartbeat ≥ 7 days → revert to free tier
 
 ### Free Tier Limits
 
@@ -343,17 +436,40 @@ CREATE INDEX IF NOT EXISTS idx_moltbook_posts_title ON moltbook_posts(title_hash
 - **Helper functions in `src/db.ts`:** `isDuplicatePost()`, `recordPost()`, `hashPostTitle()`, `hashPostContent()`, `clearMoltbookPosts()` (for tests).
 - **On duplicate:** returns `{ success: false, message: "Duplicate post blocked. Similar content was already posted to this submolt." }` — never hits the API.
 
-### --upgrade Flag
+### --upgrade Flag (Interactive Checkout with Polling)
 
-- When `npx moltmind --upgrade` is run, reads `~/.moltmind/instance_id` and opens the browser to `https://license.moltmind.com/checkout?id=<instance_id>`.
-- Cross-platform: `open` (macOS), `start` (Windows), `xdg-open` (Linux).
-- Exits immediately after opening the browser — does not start the MCP server.
+- When `npx moltmind --upgrade` is run:
+  1. Checks if already Pro → exits early if yes
+  2. Reads `~/.moltmind/instance_id`, generates a random `activationToken` (UUID)
+  3. Opens browser to `https://aidigitalcrew.com/checkout?id={instanceId}&token={activationToken}`
+  4. Polls `GET https://aidigitalcrew.com/api/license/{activationToken}` every 3s (5 min timeout)
+  5. On success: writes `~/.moltmind/license.key`, prints "Pro activated!", exits
+  6. On timeout: prints retry message, exits with code 1
+- Cross-platform browser open: `open` (macOS), `start` (Windows), `xdg-open` (Linux)
+- Does not start the MCP server
 
 ### License Key Generation (scripts/generate-license.ts)
 
 - NOT published to npm (excluded by `"files"` in package.json).
-- Reads `~/.moltmind/license-private.pem`, signs the provided `instance_id`, outputs `MMPRO-{prefix}-{sig}`.
-- Usage: `tsx scripts/generate-license.ts <instance_id>`
+- Reads `~/.moltmind/license-private.pem`, signs the provided `instance_id`.
+- Usage: `tsx scripts/generate-license.ts <instance_id>` → outputs `MMPRO-{prefix}-{sig}`
+- Usage: `tsx scripts/generate-license.ts --admin <instance_id>` → outputs `MMADMIN-{prefix}-{sig}`
+- Admin keys should be saved to `~/.moltmind/admin.key`
+
+### License Server (worker/)
+
+- Cloudflare Worker deployed to `aidigitalcrew.com`
+- **NOT published to npm** — separate deployment via `wrangler deploy`
+- Routes:
+  - `GET /checkout` — redirects to Polar hosted checkout with metadata
+  - `POST /api/webhook/polar` — handles payment, signs license, stores in KV
+  - `GET /api/license/:activationToken` — CLI polls for license key (24h TTL)
+  - `POST /api/heartbeat` — one-machine enforcement check
+- KV namespaces: `LICENSES` (24h TTL, checkout flow), `ACTIVE_LICENSES` (permanent, heartbeat)
+- Secrets: `RSA_PRIVATE_KEY`, `POLAR_WEBHOOK_SECRET`, `POLAR_ACCESS_TOKEN`, `POLAR_PRODUCT_ID`
+- Checkout creates a Polar session via API (`POST /v1/checkouts/`) with metadata `{ instance_id, activation_token }`
+- Webhook uses Standard Webhooks signature verification (HMAC-SHA256, `v1,` prefix, base64)
+- Uses Web Crypto API (`crypto.subtle.sign` with RSASSA-PKCS1-v1_5) — must produce signatures compatible with Node.js `crypto.verify` in `src/license.ts`
 
 ### Version Strings
 
@@ -424,7 +540,13 @@ CREATE INDEX IF NOT EXISTS idx_moltbook_posts_title ON moltbook_posts(title_hash
 - Do not expose raw stack traces to agents — always return `{ success: false, message }` format
 - Do not hard-delete any data — soft-delete only
 - Do not commit or publish `~/.moltmind/license-private.pem` — it is the signing key for Pro licenses
+- Do not commit or publish `~/.moltmind/admin.key` — admin licenses bypass heartbeat enforcement
+- Do not clear stored moltbook tokens or heartbeat timestamps without explicit reason — they may be in grace period
 - Do not add `@moltmind/zvec-native` as a hard dependency — it is an optional dynamic import that auto-enables for Pro users
 - Do not bypass free tier limits in `mm_store` — always call `checkStoreLimits()` before insert
 - Do not publish to npm when only non-published files changed (CLAUDE.md, tests, scripts, CI) — see @release_instructions.md
 - Do not clear stored moltbook tokens on auto-login validation failure — the token may be temporarily unusable (cooldown period). Log and keep for retry.
+- Do not remove `busy_timeout` pragma from any DB connection — it is required for multi-session coordination where multiple processes share the same SQLite file
+- Do not treat session claims as hard locks — they are advisory only. Never block writes based on claims alone.
+- Do not skip `markStaleSessions()` on startup — it cleans up crashed processes and releases their claims
+- Do not forget to release claims on session end — `releaseAllClaims()` must be called in shutdown, `pauseCurrentSession()`, and `mm_session_save` with pause/completed status
