@@ -1,7 +1,6 @@
 import { insertMemory } from "../db.js";
 import { embed, embeddingToBuffer } from "../embeddings.js";
 import { checkStoreLimits } from "../license.js";
-import { isZvecEnabled } from "../config.js";
 import { getVectorStore } from "../vector_store.js";
 import type { MemoryType } from "../types.js";
 
@@ -35,8 +34,8 @@ export async function handleMmStore(args: {
     tier: "hot",
   });
 
-  // Dual-write to Zvec if active
-  if (isZvecEnabled() && embedding) {
+  // Dual-write to vector store (no-op on BruteForceStore)
+  if (embedding) {
     getVectorStore().upsert(memory.id, embedding);
   }
 

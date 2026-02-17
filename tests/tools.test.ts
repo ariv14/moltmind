@@ -1,8 +1,8 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, rmSync, existsSync } from "node:fs";
+import { mkdirSync, rmSync, existsSync, renameSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import crypto from "node:crypto";
 
 const originalCwd = process.cwd();
@@ -416,6 +416,29 @@ describe("MCP Tool Handlers", () => {
 
   // --- mm_store: free tier limits ---
   describe("mm_store: free tier limits", () => {
+    const licensePath = join(homedir(), ".moltmind", "license.key");
+    const licenseBackup = licensePath + ".test-backup";
+    let hadLicense = false;
+
+    beforeEach(async () => {
+      // Temporarily hide Pro license so test runs in free tier
+      if (existsSync(licensePath)) {
+        renameSync(licensePath, licenseBackup);
+        hadLicense = true;
+      }
+      const { _resetLicenseCache } = await import("../src/license.js");
+      _resetLicenseCache();
+    });
+
+    afterEach(async () => {
+      if (hadLicense && existsSync(licenseBackup)) {
+        renameSync(licenseBackup, licensePath);
+        hadLicense = false;
+      }
+      const { _resetLicenseCache } = await import("../src/license.js");
+      _resetLicenseCache();
+    });
+
     it("should enforce daily store limit (20/day for free tier)", async () => {
       // Store 20 memories (the daily limit)
       for (let i = 0; i < 20; i++) {

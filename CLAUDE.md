@@ -57,7 +57,7 @@ See @README.md for user-facing documentation and @package.json for available scr
 ```
 src/
 ├── index.ts          # MCP server setup, tool registration, shutdown handlers. Entry point with shebang.
-├── config.ts         # --moltbook/--zvec flag parsing, isToolEnabled(), getToolMode(), isZvecEnabled().
+├── config.ts         # --moltbook flag parsing, isToolEnabled(), getToolMode().
 ├── db.ts             # SQLite schema, migrations, all database CRUD functions. Singleton pattern.
 ├── embeddings.ts     # Model loading, embedding generation, cosine similarity, semantic search.
 ├── license.ts        # RSA license validation, free tier limits (20/day, 200 total), machine-locked keys.
@@ -243,9 +243,8 @@ CREATE TABLE IF NOT EXISTS token_estimates (
 
 - By default, only 14 core `mm_*` tools are registered (~500 tokens overhead).
 - With `--moltbook` flag, 7 additional `mb_*` social tools are registered (~1,000 tokens total overhead).
-- With `--zvec` flag, Zvec ANN vector search is activated (requires Pro license + `@moltmind/zvec-native`).
 - With `--upgrade` flag, opens browser to license checkout page and exits (does not start MCP server).
-- `isMoltbookEnabled()` and `isZvecEnabled()` each read `process.argv` once and cache the result.
+- `isMoltbookEnabled()` reads `process.argv` once and caches the result.
 - `isToolEnabled(toolName)` returns `false` for `mb_*` tools unless `--moltbook` is set.
 - In `src/index.ts`, moltbook tool imports are dynamic (`await import(...)`) inside `registerMoltbookTools()` — only loaded when `--moltbook` is passed.
 
@@ -285,7 +284,7 @@ CREATE TABLE IF NOT EXISTS token_estimates (
 | Total memories | 200 | Unlimited |
 | Search (`mm_recall`) | Unlimited | Unlimited |
 | Session tools | Unlimited | Unlimited |
-| Vector search | Brute-force | Zvec ANN (with `--zvec`) |
+| Vector search | Brute-force | Zvec ANN (auto) |
 
 - Only `mm_store` is gated. All other tools remain unlimited on free tier.
 - `getDailyStoreCount()` in `src/db.ts` counts today's non-archived memories (efficient — free tier maxes at 200).
@@ -297,7 +296,7 @@ CREATE TABLE IF NOT EXISTS token_estimates (
 - **`BruteForceStore`:** Wraps existing `getAllMemories()` + `cosineSimilarity()` loop. `upsert()`/`delete()` are no-ops (SQLite BLOB is the store).
 - **Cached singleton:** `initVectorStore(store)` sets the active store at startup. `getVectorStore(tier?)` returns the active store or creates a new `BruteForceStore` per-call.
 - **`_resetVectorStore()`** exported for testing.
-- **Dual-write strategy:** SQLite BLOB remains source of truth. Zvec is the fast search index. If `--zvec` is removed, search falls back to brute-force using SQLite BLOBs — zero data loss.
+- **Dual-write strategy:** SQLite BLOB remains source of truth. Zvec is the fast search index. If Zvec is unavailable, search falls back to brute-force using SQLite BLOBs — zero data loss.
 
 ### ZvecStore (src/vector_store_zvec.ts)
 
@@ -306,14 +305,12 @@ CREATE TABLE IF NOT EXISTS token_estimates (
 - Tracks dirty state internally, auto-rebuilds index before search.
 - `migrateExistingEmbeddings(store)` — reads all SQLite BLOBs, bulk-inserts into Zvec index. Runs once when `zvec.idx` doesn't exist yet.
 
-### --zvec Flag (src/config.ts)
+### Zvec Auto-Enable
 
-- `isZvecEnabled()` reads `process.argv` once and caches the result. Same pattern as `isMoltbookEnabled()`.
+- Zvec ANN is automatically enabled for Pro users at startup — no CLI flag required.
 - In `src/index.ts` `main()`, after `initMetrics()`:
-  1. If `--zvec` is set, validate Pro license.
-  2. If license is invalid, log warning and fall back to brute-force.
-  3. If license is valid, dynamically import `ZvecStore`, create/migrate the index, call `initVectorStore()`.
-  4. If native module is unavailable, log fallback and continue with brute-force.
+  1. If `isProTier()` returns true, dynamically import `ZvecStore`, create/migrate the index, call `initVectorStore()`.
+  2. If the native module is unavailable, log fallback and continue with brute-force.
 
 ### --upgrade Flag
 
@@ -396,6 +393,6 @@ CREATE TABLE IF NOT EXISTS token_estimates (
 - Do not expose raw stack traces to agents — always return `{ success: false, message }` format
 - Do not hard-delete any data — soft-delete only
 - Do not commit or publish `~/.moltmind/license-private.pem` — it is the signing key for Pro licenses
-- Do not add `@moltmind/zvec-native` as a hard dependency — it is an optional dynamic import behind `--zvec`
+- Do not add `@moltmind/zvec-native` as a hard dependency — it is an optional dynamic import that auto-enables for Pro users
 - Do not bypass free tier limits in `mm_store` — always call `checkStoreLimits()` before insert
 - Do not publish to npm when only non-published files changed (CLAUDE.md, tests, scripts, CI) — see @release_instructions.md

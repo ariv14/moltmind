@@ -1,6 +1,5 @@
 import { updateMemory } from "../db.js";
 import { embed, embeddingToBuffer } from "../embeddings.js";
-import { isZvecEnabled } from "../config.js";
 import { getVectorStore } from "../vector_store.js";
 import type { MemoryType, MemoryTier } from "../types.js";
 
@@ -36,8 +35,8 @@ export async function handleMmUpdate(args: {
     return { success: false, message: "Memory not found" };
   }
 
-  // Dual-write to Zvec if active and content was re-embedded
-  if (isZvecEnabled() && newEmbedding) {
+  // Dual-write to vector store (no-op on BruteForceStore)
+  if (newEmbedding) {
     getVectorStore().upsert(args.id, newEmbedding);
   }
 

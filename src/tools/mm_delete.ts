@@ -1,5 +1,4 @@
 import { deleteMemory } from "../db.js";
-import { isZvecEnabled } from "../config.js";
 import { getVectorStore } from "../vector_store.js";
 
 export async function handleMmDelete(args: {
@@ -10,10 +9,8 @@ export async function handleMmDelete(args: {
     return { success: false, message: "Memory not found" };
   }
 
-  // Remove from Zvec index if active
-  if (isZvecEnabled()) {
-    getVectorStore().delete(args.id);
-  }
+  // Remove from vector store (no-op on BruteForceStore)
+  getVectorStore().delete(args.id);
 
   return { success: true, message: "Memory archived" };
 }

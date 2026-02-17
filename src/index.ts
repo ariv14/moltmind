@@ -6,7 +6,7 @@ import { z } from "zod";
 import { closeDb, getSession, getSessionDiagnostics, updateSession, listSessions, getLatestHandoff } from "./db.js";
 import { withDiagnostics } from "./diagnostics.js";
 import { initMetrics, recordToolCall, pauseCurrentSession, getCurrentSessionId } from "./metrics.js";
-import { isMoltbookEnabled, isZvecEnabled, getToolMode, getEnabledToolCount } from "./config.js";
+import { isMoltbookEnabled, getToolMode, getEnabledToolCount } from "./config.js";
 import { handleMmStore } from "./tools/mm_store.js";
 import { handleMmRecall } from "./tools/mm_recall.js";
 import { handleMmRead } from "./tools/mm_read.js";
@@ -349,39 +349,32 @@ async function main(): Promise<void> {
 
   initMetrics();
 
-  // Initialize Zvec if --zvec flag is set
-  if (isZvecEnabled()) {
-    try {
-      const { validateLicense } = await import("./license.js");
-      const license = validateLicense();
-      if (!license.valid) {
-        console.error(`MoltMind Pro: ${license.message}`);
-        console.error("Zvec requires Pro license. Falling back to brute-force.");
-      } else {
-        console.error(`MoltMind Pro: ${license.message}`);
-        try {
-          const { existsSync } = await import("node:fs");
-          const { join } = await import("node:path");
-          const { homedir } = await import("node:os");
-          const { ZvecStore, migrateExistingEmbeddings } = await import("./vector_store_zvec.js");
-          const { initVectorStore } = await import("./vector_store.js");
-          const zvecPath = existsSync(".moltmind/memory.db")
-            ? ".moltmind/zvec.idx"
-            : join(homedir(), ".moltmind", "zvec.idx");
+  // Auto-enable Zvec ANN for Pro users
+  try {
+    const { isProTier } = await import("./license.js");
+    if (isProTier()) {
+      try {
+        const { existsSync } = await import("node:fs");
+        const { join } = await import("node:path");
+        const { homedir } = await import("node:os");
+        const { ZvecStore, migrateExistingEmbeddings } = await import("./vector_store_zvec.js");
+        const { initVectorStore } = await import("./vector_store.js");
+        const zvecPath = existsSync(".moltmind/memory.db")
+          ? ".moltmind/zvec.idx"
+          : join(homedir(), ".moltmind", "zvec.idx");
 
-          const store = new ZvecStore(zvecPath);
-          if (!existsSync(zvecPath)) {
-            migrateExistingEmbeddings(store);
-          }
-          initVectorStore(store);
-          console.error("MoltMind: Zvec ANN index active");
-        } catch (err) {
-          console.error(`MoltMind: Zvec unavailable (${err}), using brute-force`);
+        const store = new ZvecStore(zvecPath);
+        if (!existsSync(zvecPath)) {
+          migrateExistingEmbeddings(store);
         }
+        initVectorStore(store);
+        console.error("MoltMind: Zvec ANN index active");
+      } catch (err) {
+        console.error(`MoltMind: Zvec unavailable (${err}), using brute-force`);
       }
-    } catch (err) {
-      console.error(`MoltMind: License check failed (${err}), using brute-force`);
     }
+  } catch {
+    // License check failed — continue with brute-force silently
   }
 
   if (isMoltbookEnabled()) {
