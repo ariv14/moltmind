@@ -183,10 +183,13 @@ describe("MCP Tool Handlers", () => {
     it("should return server status", async () => {
       const result = await handleMmStatus();
       assert.equal(result.success, true);
-      assert.equal(result.version, "0.4.1");
+      assert.equal(result.version, "0.5.0");
       assert.ok(result.db_stats);
       assert.equal(typeof result.health_score, "number");
       assert.equal(typeof result.uptime_seconds, "number");
+      // New tier + usage fields
+      assert.ok(result.tier === "free" || result.tier === "pro");
+      assert.equal(typeof result.usage, "string");
     });
   });
 
@@ -408,6 +411,28 @@ describe("MCP Tool Handlers", () => {
       assert.equal(configModule.isToolEnabled("mb_vote"), false);
       assert.equal(configModule.isToolEnabled("mb_social"), false);
       assert.equal(configModule.isToolEnabled("mb_submolt"), false);
+    });
+  });
+
+  // --- mm_store: free tier limits ---
+  describe("mm_store: free tier limits", () => {
+    it("should enforce daily store limit (20/day for free tier)", async () => {
+      // Store 20 memories (the daily limit)
+      for (let i = 0; i < 20; i++) {
+        const result = await handleMmStore({
+          title: `Memory ${i}`,
+          content: `Content ${i}`,
+        });
+        assert.equal(result.success, true, `Memory ${i} should succeed`);
+      }
+
+      // The 21st should be rejected
+      const result = await handleMmStore({
+        title: "Memory 21",
+        content: "Content 21",
+      });
+      assert.equal(result.success, false);
+      assert.ok(result.message?.includes("20 stores per day"));
     });
   });
 

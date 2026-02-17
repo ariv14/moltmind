@@ -724,6 +724,15 @@ export function getSessionDiagnostics(sessionId: string): {
   return { total_calls: totalCalls, errors, by_tool: byTool };
 }
 
+export function getDailyStoreCount(): number {
+  const database = getDb();
+  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  const row = database.prepare(
+    "SELECT COUNT(*) as count FROM memories WHERE created_at >= ? AND tier != 'archived'"
+  ).get(today + "T00:00:00.000Z") as { count: number };
+  return row.count;
+}
+
 export function initProjectVault(activeSessionId?: string | null): string {
   ensureDir(PROJECT_DIR);
 

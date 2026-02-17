@@ -6,7 +6,7 @@ import { z } from "zod";
 import { closeDb, getSession, getSessionDiagnostics, updateSession, listSessions, getLatestHandoff } from "./db.js";
 import { withDiagnostics } from "./diagnostics.js";
 import { initMetrics, recordToolCall, pauseCurrentSession, getCurrentSessionId } from "./metrics.js";
-import { isMoltbookEnabled, getToolMode, getEnabledToolCount } from "./config.js";
+import { isMoltbookEnabled, isZvecEnabled, getToolMode, getEnabledToolCount } from "./config.js";
 import { handleMmStore } from "./tools/mm_store.js";
 import { handleMmRecall } from "./tools/mm_recall.js";
 import { handleMmRead } from "./tools/mm_read.js";
@@ -28,7 +28,7 @@ const moltbookInstructions = isMoltbookEnabled()
 
 const server = new McpServer({
   name: "moltmind",
-  version: "0.4.1",
+  version: "0.5.0",
 }, {
   instructions: `MoltMind provides persistent memory and session continuity. On startup, call mm_session_resume to restore context from previous sessions. Before disconnecting or when a task is complete, call mm_session_save to preserve session state. Use mm_handoff_create to checkpoint progress during long tasks.${moltbookInstructions}`,
 });
@@ -328,7 +328,61 @@ function shutdown(): void {
 }
 
 async function main(): Promise<void> {
+  // Handle --upgrade flag
+  if (process.argv.includes("--upgrade")) {
+    const { readFileSync, existsSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { homedir } = await import("node:os");
+    const instanceIdPath = join(homedir(), ".moltmind", "instance_id");
+    if (!existsSync(instanceIdPath)) {
+      console.error("No instance_id found. Run any MoltMind tool first to generate one.");
+      process.exit(1);
+    }
+    const instanceId = readFileSync(instanceIdPath, "utf-8").trim();
+    const url = `https://license.moltmind.com/checkout?id=${instanceId}`;
+    console.error(`Opening: ${url}`);
+    const { exec } = await import("node:child_process");
+    const cmd = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+    exec(`${cmd} "${url}"`);
+    process.exit(0);
+  }
+
   initMetrics();
+
+  // Initialize Zvec if --zvec flag is set
+  if (isZvecEnabled()) {
+    try {
+      const { validateLicense } = await import("./license.js");
+      const license = validateLicense();
+      if (!license.valid) {
+        console.error(`MoltMind Pro: ${license.message}`);
+        console.error("Zvec requires Pro license. Falling back to brute-force.");
+      } else {
+        console.error(`MoltMind Pro: ${license.message}`);
+        try {
+          const { existsSync } = await import("node:fs");
+          const { join } = await import("node:path");
+          const { homedir } = await import("node:os");
+          const { ZvecStore, migrateExistingEmbeddings } = await import("./vector_store_zvec.js");
+          const { initVectorStore } = await import("./vector_store.js");
+          const zvecPath = existsSync(".moltmind/memory.db")
+            ? ".moltmind/zvec.idx"
+            : join(homedir(), ".moltmind", "zvec.idx");
+
+          const store = new ZvecStore(zvecPath);
+          if (!existsSync(zvecPath)) {
+            migrateExistingEmbeddings(store);
+          }
+          initVectorStore(store);
+          console.error("MoltMind: Zvec ANN index active");
+        } catch (err) {
+          console.error(`MoltMind: Zvec unavailable (${err}), using brute-force`);
+        }
+      }
+    } catch (err) {
+      console.error(`MoltMind: License check failed (${err}), using brute-force`);
+    }
+  }
 
   if (isMoltbookEnabled()) {
     await registerMoltbookTools();

@@ -1,5 +1,6 @@
 import { searchMemoriesFTS, getAllMemories } from "../db.js";
-import { embed, cosineSimilarity, bufferToEmbedding, isModelReady } from "../embeddings.js";
+import { embed, isModelReady } from "../embeddings.js";
+import { getVectorStore } from "../vector_store.js";
 import type { MemoryType, MemoryTier } from "../types.js";
 
 export async function handleMmRecall(args: {
@@ -20,19 +21,15 @@ export async function handleMmRecall(args: {
     ftsScoreMap.set(mem.id, 1 - i / Math.max(ftsResults.length, 1));
   });
 
-  // Semantic search (if model available)
+  // Semantic search via VectorStore abstraction
   const semanticScoreMap = new Map<string, number>();
   const queryEmbedding = await embed(args.query);
 
   if (queryEmbedding) {
-    // Get all non-archived memories with embeddings
-    const allMemories = getAllMemories(args.tier, 1000);
-    for (const mem of allMemories) {
-      if (mem.embedding) {
-        const memEmbedding = bufferToEmbedding(mem.embedding);
-        const score = cosineSimilarity(queryEmbedding, memEmbedding);
-        semanticScoreMap.set(mem.id, score);
-      }
+    const store = getVectorStore(args.tier);
+    const vectorResults = store.search(queryEmbedding, fetchLimit);
+    for (const { id, score } of vectorResults) {
+      semanticScoreMap.set(id, score);
     }
   }
 

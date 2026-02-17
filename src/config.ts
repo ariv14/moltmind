@@ -35,3 +35,12 @@ export function getToolMode(): "default" | "moltbook" {
 export function getEnabledToolCount(): number {
   return isMoltbookEnabled() ? 21 : 14;
 }
+
+let zvecEnabled: boolean | null = null;
+
+export function isZvecEnabled(): boolean {
+  if (zvecEnabled === null) {
+    zvecEnabled = process.argv.includes("--zvec");
+  }
+  return zvecEnabled;
+}

@@ -1,5 +1,7 @@
 import { updateMemory } from "../db.js";
 import { embed, embeddingToBuffer } from "../embeddings.js";
+import { isZvecEnabled } from "../config.js";
+import { getVectorStore } from "../vector_store.js";
 import type { MemoryType, MemoryTier } from "../types.js";
 
 export async function handleMmUpdate(args: {
@@ -20,17 +22,23 @@ export async function handleMmUpdate(args: {
   if (args.tier !== undefined) updates.tier = args.tier;
 
   // Re-embed if content changed
+  let newEmbedding: Float32Array | null = null;
   if (args.content !== undefined) {
     const text = `${args.title ?? ""} ${args.content}`;
-    const embedding = await embed(text);
-    if (embedding) {
-      updates.embedding = embeddingToBuffer(embedding);
+    newEmbedding = await embed(text);
+    if (newEmbedding) {
+      updates.embedding = embeddingToBuffer(newEmbedding);
     }
   }
 
   const updated = updateMemory(args.id, updates);
   if (!updated) {
     return { success: false, message: "Memory not found" };
+  }
+
+  // Dual-write to Zvec if active and content was re-embedded
+  if (isZvecEnabled() && newEmbedding) {
+    getVectorStore().upsert(args.id, newEmbedding);
   }
 
   return {
