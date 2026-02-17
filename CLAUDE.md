@@ -93,7 +93,8 @@ tests/
 ├── token_estimator.test.ts
 ├── license.test.ts
 ├── vector_store.test.ts
-└── tools.test.ts
+├── tools.test.ts
+└── moltbook.test.ts
 .github/
 └── workflows/
     └── ci.yml        # Lint + test on push/PR to main
@@ -139,9 +140,10 @@ tests/
 - v3 = moltbook_auth table
 - v4 = sessions table + session_id column on diagnostics
 - v5 = token_estimates table
+- v6 = moltbook_posts table (duplicate post tracking for moltbook)
 - This ensures existing users on older versions don't break when upgrading
 
-### Tables (v5 schema)
+### Tables (v6 schema)
 
 **memories** — core memory storage (v1)
 **handoffs** — agent-to-agent context transfer (v1)
@@ -202,6 +204,19 @@ CREATE TABLE IF NOT EXISTS token_estimates (
   net_savings INTEGER NOT NULL DEFAULT 0,
   updated_at TEXT NOT NULL
 );
+```
+
+**moltbook_posts** — duplicate post tracking for moltbook (v6)
+```sql
+CREATE TABLE IF NOT EXISTS moltbook_posts (
+  id TEXT PRIMARY KEY,
+  title_hash TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  submolt TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_moltbook_posts_content ON moltbook_posts(content_hash);
+CREATE INDEX IF NOT EXISTS idx_moltbook_posts_title ON moltbook_posts(title_hash);
 ```
 
 ### Query Behavior
@@ -312,6 +327,22 @@ CREATE TABLE IF NOT EXISTS token_estimates (
   1. If `isProTier()` returns true, dynamically import `ZvecStore`, create/migrate the index, call `initVectorStore()`.
   2. If the native module is unavailable, log fallback and continue with brute-force.
 
+### Moltbook Auto-Login
+
+- When `--moltbook` is enabled, after `registerMoltbookTools()` in `main()`, the server validates any stored API token with `GET /agents/me` (5s timeout).
+- On success: logs `Moltbook: authenticated as <name>` to stderr.
+- On failure: logs `Moltbook: stored token not currently valid (status <N>), keeping for retry` — does **not** clear the token (it may be temporarily unusable, e.g. post-suspension cooldown).
+- Non-blocking: wrapped in try/catch, failure never prevents server startup.
+- Token storage uses `getStoredToken()` / `storeToken()` in `src/moltbook_client.ts`, backed by the `moltbook_auth` table in the global DB.
+
+### Moltbook Duplicate Post Guardrails
+
+- `mb_post create` checks for duplicate posts before calling the API, preventing accidental suspension from repeated content.
+- **How it works:** SHA-256 hashes of `title.trim().toLowerCase()` and `content.trim().toLowerCase()` are compared against the `moltbook_posts` table. A post is blocked if either its title hash OR content hash matches an existing record in the same submolt.
+- **After successful create:** `recordPost()` stores the post ID, title hash, content hash, and submolt in `moltbook_posts` (global DB).
+- **Helper functions in `src/db.ts`:** `isDuplicatePost()`, `recordPost()`, `hashPostTitle()`, `hashPostContent()`, `clearMoltbookPosts()` (for tests).
+- **On duplicate:** returns `{ success: false, message: "Duplicate post blocked. Similar content was already posted to this submolt." }` — never hits the API.
+
 ### --upgrade Flag
 
 - When `npx moltmind --upgrade` is run, reads `~/.moltmind/instance_id` and opens the browser to `https://license.moltmind.com/checkout?id=<instance_id>`.
@@ -396,3 +427,4 @@ CREATE TABLE IF NOT EXISTS token_estimates (
 - Do not add `@moltmind/zvec-native` as a hard dependency — it is an optional dynamic import that auto-enables for Pro users
 - Do not bypass free tier limits in `mm_store` — always call `checkStoreLimits()` before insert
 - Do not publish to npm when only non-published files changed (CLAUDE.md, tests, scripts, CI) — see @release_instructions.md
+- Do not clear stored moltbook tokens on auto-login validation failure — the token may be temporarily unusable (cooldown period). Log and keep for retry.
