@@ -14,6 +14,82 @@ Think of MoltMind as a notebook for your AI assistant. It lets Claude remember t
 
 ---
 
+## The Showoff Scenario: Watch Claude Survive a Crash
+
+This is the best way to see what MoltMind actually does. You'll give Claude a task, interrupt it halfway, close everything, come back, and watch it pick up exactly where it left off — like nothing happened.
+
+### Step 1 — Start a task (Conversation 1)
+
+Open Claude Code and type:
+
+> I'm planning a birthday party for my mom. She likes Italian food, jazz music, and the color purple. The party is on March 15th. We need to figure out: the restaurant, the playlist, the decorations, and the guest list.
+
+Claude will save these details. Now give it some progress:
+
+> We decided on Olive Garden for the restaurant. The playlist is done — 30 jazz songs on Spotify. Still need to figure out decorations and the guest list. Remember all of this.
+
+Claude saves everything. Now type one more thing:
+
+> Create a handoff for the party planning so we can pick this up later
+
+**What should happen:** Claude creates a structured bookmark that captures:
+- The goal (plan mom's birthday party)
+- What's done (restaurant booked, playlist ready)
+- What's left (decorations and guest list)
+- Key details (March 15th, Italian food, jazz, purple)
+
+### Step 2 — Pull the plug
+
+Now simulate an unexpected interruption. Do one of these:
+- Press **Ctrl+C** to kill Claude Code
+- Or just close the terminal window entirely
+
+Don't save anything. Don't say goodbye. Just close it — like your laptop died or your WiFi dropped.
+
+**What happens behind the scenes:** Even though you didn't save anything, MoltMind automatically records what tools were used during that session and marks it as interrupted. Nothing is lost.
+
+### Step 3 — Come back later (Conversation 2)
+
+Open Claude Code again. This is a brand new conversation — Claude normally wouldn't remember anything. But with MoltMind, type:
+
+> What was I working on last time?
+
+**What should happen:** Claude checks MoltMind and tells you:
+- You were planning your mom's birthday party
+- Olive Garden is booked, playlist is done
+- You still need decorations and the guest list
+- The party is March 15th and she likes purple
+
+It's like Claude has perfect memory of a conversation it was never part of.
+
+### Step 4 — Keep going like nothing happened
+
+> OK let's figure out decorations. Purple tablecloths, purple balloons, and a "Happy Birthday" banner. Save this progress.
+
+**What should happen:** Claude updates the session with the new progress. Now decorations are done too — only the guest list remains.
+
+### Step 5 — Pull the plug again
+
+Close Claude Code again without warning. Just close the window.
+
+### Step 6 — Come back one more time (Conversation 3)
+
+Open Claude Code and type:
+
+> Catch me up on the party planning
+
+**What should happen:** Claude now knows:
+- Restaurant: Olive Garden (done)
+- Playlist: 30 jazz songs (done)
+- Decorations: purple tablecloths, balloons, banner (done)
+- Guest list: still needs to be figured out
+
+Three different conversations, two unexpected crashes, and Claude didn't lose a single detail.
+
+**That's MoltMind.** Your AI assistant now has a memory that survives anything.
+
+---
+
 ## Part 1: Teaching Claude to Remember Things
 
 ### Test 1 — Save a note
@@ -158,6 +234,9 @@ Check off each test as you go:
 
 | # | What you tested | Done? |
 |---|----------------|-------|
+| - | **Showoff Scenario** | |
+| - | Start a task, crash, come back, continue | [ ] |
+| | | |
 | 1 | Save a note | [ ] |
 | 2 | Find it with different words | [ ] |
 | 3 | Look up a specific note | [ ] |
