@@ -117,7 +117,7 @@ Every MCP tool adds a small overhead to each request because the AI needs to kno
 
 ## Free vs Pro
 
-| | Free | Pro |
+| | Free | Pro ($9 one-time) |
 |--|------|-----|
 | Stores per day | 20 | Unlimited |
 | Total memories | 200 | Unlimited |
@@ -125,7 +125,48 @@ Every MCP tool adds a small overhead to each request because the AI needs to kno
 | Session tools | Unlimited | Unlimited |
 | Vector search | Brute-force | Zvec ANN (auto) |
 
-Upgrade: `npx moltmind --upgrade`
+### Upgrade to Pro
+
+#### From your terminal
+
+**macOS / Linux:**
+
+```bash
+npx moltmind --upgrade
+```
+
+**Windows (Command Prompt or PowerShell):**
+
+```bash
+npx moltmind --upgrade
+```
+
+Same command on all platforms. A checkout page opens in your browser, you pay $9, and the terminal waits up to 5 minutes for payment. Once confirmed, your license activates automatically — no copy-pasting keys, no config files.
+
+> **Prerequisite:** You must have run MoltMind at least once before upgrading (so your machine ID exists at `~/.moltmind/instance_id`). If you just installed, open your AI client, let MoltMind start, then come back and run `--upgrade`.
+
+#### From inside your AI agent
+
+If you're already in a conversation with an agent that has MoltMind installed, just say:
+
+> "Upgrade MoltMind to Pro"
+
+Your agent will run `npx moltmind --upgrade` for you, the checkout page opens, and the license activates after payment. Works in Claude Code, Cursor, Windsurf, Cline, Codex CLI — any client where MoltMind is installed.
+
+#### After payment
+
+- License is written to `~/.moltmind/license.key`
+- Zvec ANN search auto-enables on next startup
+- `mm_status` shows "Pro" tier
+- Restart your MCP client to pick up the change
+
+#### Machine lock and migration
+
+Pro licenses are tied to one machine (your `instance_id`). A daily heartbeat check enforces this.
+
+- **Switching machines?** Run `npx moltmind --upgrade` on the new one. Your old machine reverts to free within 24 hours.
+- **Offline?** A 7-day grace period keeps Pro active while you're disconnected.
+- **All data stays local.** The heartbeat only sends your machine ID and license prefix — no memory content ever leaves your machine.
 
 ## Search Performance (Pro)
 
@@ -147,6 +188,7 @@ See [BENCHMARK_RESULTS.md](BENCHMARK_RESULTS.md) for the full report, or [RUNBOO
 | `./.moltmind/memory.db` | Project-local vault (via `mm_init`) |
 | `~/.moltmind/models/` | Cached embedding model (~22MB) |
 | `~/.moltmind/instance_id` | Anonymous instance identifier |
+| `~/.moltmind/license.key` | Pro license (after upgrade) |
 
 ## Requirements
 

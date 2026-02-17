@@ -225,7 +225,7 @@ The benchmark exits with code 1 if any of these minimums aren't met:
 
 ## Free vs Pro
 
-| | Free | Pro |
+| | Free | Pro ($9 one-time) |
 |--|------|-----|
 | Stores per day | 20 | Unlimited |
 | Total memories | 200 | Unlimited |
@@ -236,9 +236,71 @@ The benchmark exits with code 1 if any of these minimums aren't met:
 
 **Stay on Free** if you work on 1-2 projects and store fewer than ~20 memories/day. The 200 total cap covers most individual workflows.
 
-**Upgrade to Pro** if you work across many projects, need more than 200 memories, or want sub-millisecond search at scale. Run `npx moltmind --upgrade`.
+**Upgrade to Pro** if you work across many projects, need more than 200 memories, or want sub-millisecond search at scale.
 
-Pro licenses are RSA-signed and machine-locked to your `instance_id`. Stored at `~/.moltmind/license.key`. Zvec ANN auto-enables — no flags needed. All data stays local.
+### How to upgrade
+
+#### Option 1: From your terminal
+
+**macOS:**
+
+```bash
+npx moltmind --upgrade
+```
+
+**Linux:**
+
+```bash
+npx moltmind --upgrade
+```
+
+**Windows (Command Prompt or PowerShell):**
+
+```bash
+npx moltmind --upgrade
+```
+
+Same command everywhere. A checkout page opens in your default browser. Pay $9, and the terminal waits up to 5 minutes for payment confirmation. Once complete, the license is written to `~/.moltmind/license.key` automatically.
+
+> **Important:** MoltMind must have run at least once before you upgrade, so your machine ID (`~/.moltmind/instance_id`) exists. If you just installed, start your AI client first, let MoltMind initialize, then run `--upgrade`.
+
+#### Option 2: From inside your AI agent
+
+Already chatting with an agent that has MoltMind? Just ask it:
+
+> "Upgrade MoltMind to Pro"
+
+Works in any MCP client:
+
+| Client | How to upgrade |
+|--------|---------------|
+| Claude Code | Type "Upgrade MoltMind to Pro" in chat |
+| Cursor | Type "Upgrade MoltMind to Pro" in chat |
+| Windsurf | Type "Upgrade MoltMind to Pro" in chat |
+| Cline | Type "Upgrade MoltMind to Pro" in chat |
+| Codex CLI | Type "Upgrade MoltMind to Pro" in chat |
+
+Your agent runs `npx moltmind --upgrade`, the browser opens, and the license activates after payment.
+
+#### After payment
+
+1. License is saved to `~/.moltmind/license.key`
+2. Restart your MCP client (or start a new conversation)
+3. Run `mm_status` (or ask your agent "show MoltMind status") — should show **Pro** tier
+4. Zvec ANN search auto-enables — no extra config needed
+
+### Machine lock and heartbeat
+
+Pro licenses are tied to a single machine (your `instance_id`). A daily heartbeat verifies this.
+
+| Scenario | What happens |
+|----------|-------------|
+| Normal use | Heartbeat succeeds silently once per day |
+| Switch machines | Run `--upgrade` on the new machine. Old machine reverts to free within 24 hours |
+| Offline < 7 days | Grace period — Pro stays active |
+| Offline > 7 days | Reverts to free. Run `--upgrade` to reactivate when back online |
+
+The heartbeat only sends your machine ID and license prefix. No memory content ever leaves your machine.
 
 ---
 
@@ -322,12 +384,22 @@ Should return valid JSON-RPC. If not, something is writing to stdout.
 ### License activation
 
 **Symptom:** `mm_status` shows "free" after purchasing Pro.
-**Check:**
+
+**If you used `npx moltmind --upgrade`:**
+The CLI polls for your license for up to 5 minutes after payment. If it timed out, run `--upgrade` again — it will detect the existing purchase and activate.
+
+**If activating manually:**
 ```bash
 cat ~/.moltmind/instance_id       # your machine ID
 cat ~/.moltmind/license.key       # should start with MMPRO-
 ```
 The 8 chars after `MMPRO-` must match your `instance_id` prefix. Restart your MCP client after placing the license file.
+
+### License revoked unexpectedly
+
+**Symptom:** Pro suddenly reverts to free.
+**Cause:** The daily heartbeat detected the license is active on another machine, or you were offline for more than 7 days.
+**Fix:** Run `npx moltmind --upgrade` to reactivate. If you switched machines, this transfers the license automatically.
 
 ### Database locked
 
