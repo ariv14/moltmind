@@ -1,6 +1,8 @@
 import crypto from "node:crypto";
 import { insertHandoff, logSessionEvent, claimResource } from "../db.js";
 import { getCurrentSessionId } from "../metrics.js";
+// NOTE: logSessionEvent is still imported for claim-specific events below.
+// The handoff_created event is now auto-logged by wrapTool() in index.ts.
 
 export async function handleMmHandoffCreate(args: {
   goal: string;
@@ -24,9 +26,6 @@ export async function handleMmHandoffCreate(args: {
     stop_conditions: args.stop_conditions ?? [],
     session_id: sessionId,
   });
-
-  // Log cross-session event
-  logSessionEvent(sessionId, "handoff_created", handoff.id, args.goal.slice(0, 100));
 
   // Process claims if provided
   const claimResults: Array<{ resource: string; success: boolean; held_by?: string }> = [];

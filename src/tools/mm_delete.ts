@@ -1,6 +1,5 @@
-import { deleteMemory, logSessionEvent } from "../db.js";
+import { deleteMemory } from "../db.js";
 import { getVectorStore } from "../vector_store.js";
-import { getCurrentSessionId } from "../metrics.js";
 
 export async function handleMmDelete(args: {
   id: string;
@@ -12,12 +11,6 @@ export async function handleMmDelete(args: {
 
   // Remove from vector store (no-op on BruteForceStore)
   getVectorStore().delete(args.id);
-
-  // Log cross-session event
-  const sessionId = getCurrentSessionId();
-  if (sessionId) {
-    logSessionEvent(sessionId, "memory_archived", args.id);
-  }
 
   return { success: true, message: "Memory archived" };
 }

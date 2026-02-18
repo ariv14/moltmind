@@ -3,7 +3,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { closeDb, getSession, getSessionDiagnostics, updateSession, listSessions, getLatestHandoff, releaseAllClaims } from "./db.js";
+import { closeDb, getSession, getSessionDiagnostics, updateSession, listSessions, getLatestHandoff, releaseAllClaims, logSessionEvent } from "./db.js";
 import { withDiagnostics } from "./diagnostics.js";
 import { initMetrics, recordToolCall, pauseCurrentSession, getCurrentSessionId, heartbeat } from "./metrics.js";
 import { isMoltbookEnabled, getToolMode, getEnabledToolCount } from "./config.js";
@@ -33,6 +33,99 @@ const server = new McpServer({
   instructions: `MoltMind provides persistent memory and session continuity. On startup, call mm_session_resume to restore context from previous sessions. Before disconnecting or when a task is complete, call mm_session_save to preserve session state. Use mm_handoff_create to checkpoint progress during long tasks.${moltbookInstructions}`,
 });
 
+type ToolSummary = { event_type: string; summary: string; resource_id?: string };
+
+const TOOL_SUMMARIZERS: Record<string, (args: Record<string, unknown>, result: Record<string, unknown>) => ToolSummary> = {
+  mm_store: (args, result) => ({
+    event_type: "memory_stored",
+    summary: `Stored ${(args.type as string) ?? "raw"} memory: ${String(args.title ?? "").slice(0, 80)}`,
+    resource_id: result.id as string | undefined,
+  }),
+  mm_recall: (args) => ({
+    event_type: "tool_call",
+    summary: `Searched memories: "${String(args.query ?? "").slice(0, 80)}"`,
+  }),
+  mm_read: (args) => ({
+    event_type: "tool_call",
+    summary: `Read memory ${String(args.id ?? "").slice(0, 8)}`,
+    resource_id: args.id as string | undefined,
+  }),
+  mm_update: (args, result) => ({
+    event_type: "memory_updated",
+    summary: `Updated memory ${String(args.id ?? "").slice(0, 8)}${args.title ? `: ${String(args.title).slice(0, 60)}` : ""}`,
+    resource_id: args.id as string | undefined,
+  }),
+  mm_delete: (args) => ({
+    event_type: "memory_archived",
+    summary: `Archived memory ${String(args.id ?? "").slice(0, 8)}`,
+    resource_id: args.id as string | undefined,
+  }),
+  mm_status: () => ({
+    event_type: "tool_call",
+    summary: "Checked server status",
+  }),
+  mm_init: () => ({
+    event_type: "tool_call",
+    summary: "Initialized project vault",
+  }),
+  mm_handoff_create: (args) => ({
+    event_type: "handoff_created",
+    summary: `Created handoff: ${String(args.goal ?? "").slice(0, 80)}`,
+  }),
+  mm_handoff_load: () => ({
+    event_type: "tool_call",
+    summary: "Loaded latest handoff",
+  }),
+  mm_feedback: (args) => ({
+    event_type: "tool_call",
+    summary: `Submitted ${args.type ?? "feedback"} feedback${args.tool_name ? ` for ${args.tool_name}` : ""}`,
+  }),
+  mm_metrics: () => ({
+    event_type: "tool_call",
+    summary: "Viewed metrics dashboard",
+  }),
+  mm_session_save: (args) => ({
+    event_type: "tool_call",
+    summary: `Saved session (${args.status ?? "paused"})${args.summary ? `: ${String(args.summary).slice(0, 60)}` : ""}`,
+  }),
+  mm_session_resume: () => ({
+    event_type: "tool_call",
+    summary: "Resumed session context",
+  }),
+  mm_session_history: () => ({
+    event_type: "tool_call",
+    summary: "Viewed session history",
+  }),
+  mb_auth: (args) => ({
+    event_type: "tool_call",
+    summary: `Moltbook auth: ${args.action ?? "unknown"}`,
+  }),
+  mb_post: (args) => ({
+    event_type: "tool_call",
+    summary: `Moltbook post: ${args.action ?? "unknown"}${args.title ? ` — ${String(args.title).slice(0, 60)}` : ""}`,
+  }),
+  mb_feed: (args) => ({
+    event_type: "tool_call",
+    summary: `Moltbook feed: ${args.action ?? "browse"}${args.query ? ` "${String(args.query).slice(0, 40)}"` : ""}`,
+  }),
+  mb_comment: (args) => ({
+    event_type: "tool_call",
+    summary: `Moltbook comment: ${args.action ?? "unknown"}`,
+  }),
+  mb_vote: (args) => ({
+    event_type: "tool_call",
+    summary: `Moltbook vote: ${args.action ?? "unknown"}`,
+  }),
+  mb_social: (args) => ({
+    event_type: "tool_call",
+    summary: `Moltbook social: ${args.action ?? "unknown"}${args.name ? ` @${args.name}` : ""}`,
+  }),
+  mb_submolt: (args) => ({
+    event_type: "tool_call",
+    summary: `Moltbook submolt: ${args.action ?? "unknown"}${args.name ? ` ${args.name}` : ""}`,
+  }),
+};
+
 function wrapTool(
   toolName: string,
   handler: (args: Record<string, unknown>) => Promise<Record<string, unknown>>
@@ -40,7 +133,26 @@ function wrapTool(
   return (args: Record<string, unknown>) =>
     withDiagnostics(toolName, async () => {
       const result = await handler(args);
-      recordToolCall(toolName, result.success !== false);
+      const success = result.success !== false;
+      recordToolCall(toolName, success);
+
+      // Auto-log session event
+      try {
+        const sessionId = getCurrentSessionId();
+        if (sessionId) {
+          const summarizer = TOOL_SUMMARIZERS[toolName];
+          if (summarizer) {
+            const { event_type, summary, resource_id } = summarizer(args, result);
+            const finalSummary = success ? summary : `${summary} [FAILED]`;
+            logSessionEvent(sessionId, event_type, resource_id ?? null, finalSummary);
+          } else {
+            logSessionEvent(sessionId, "tool_call", null, `Called ${toolName}${success ? "" : " [FAILED]"}`);
+          }
+        }
+      } catch {
+        // Never let logging failure break tool execution
+      }
+
       return {
         content: [{ type: "text" as const, text: JSON.stringify(result) }],
       };

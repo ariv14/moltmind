@@ -867,6 +867,21 @@ export function logSessionEvent(
   ).run(crypto.randomUUID(), sessionId, eventType, resourceId, summary, new Date().toISOString());
 }
 
+export function getSessionEvents(sessionId: string, limit: number = 50): SessionEvent[] {
+  const database = getDb();
+  const rows = database.prepare(
+    "SELECT * FROM session_events WHERE session_id = ? ORDER BY created_at ASC LIMIT ?"
+  ).all(sessionId, limit) as Record<string, unknown>[];
+  return rows.map((row) => ({
+    id: row.id as string,
+    session_id: row.session_id as string,
+    event_type: row.event_type as string,
+    resource_id: (row.resource_id as string) ?? null,
+    summary: (row.summary as string) ?? null,
+    created_at: row.created_at as string,
+  }));
+}
+
 export function getRecentEvents(sinceIso: string, limit: number = 50): SessionEvent[] {
   const database = getDb();
   const rows = database.prepare(

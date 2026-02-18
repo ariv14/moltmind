@@ -388,6 +388,83 @@ describe("MCP Tool Handlers", () => {
     });
   });
 
+  // --- getSessionEvents and activity_log ---
+  describe("getSessionEvents and activity_log", () => {
+    it("should return events for a session in chronological order", async () => {
+      const sessionId = metricsModule.getCurrentSessionId();
+      assert.ok(sessionId);
+
+      // Manually log events (wrapTool auto-logs in production, tests call handlers directly)
+      db.logSessionEvent(sessionId, "memory_stored", "id1", "Stored learning: First memory");
+      db.logSessionEvent(sessionId, "tool_call", null, "Searched memories: \"test query\"");
+      db.logSessionEvent(sessionId, "tool_call", null, "Checked server status");
+
+      const events = db.getSessionEvents(sessionId);
+      assert.equal(events.length, 3);
+
+      // Events should be in chronological order (ASC)
+      for (let i = 1; i < events.length; i++) {
+        assert.ok(events[i].created_at >= events[i - 1].created_at, "Events should be in chronological order");
+      }
+
+      // Verify content
+      assert.equal(events[0].event_type, "memory_stored");
+      assert.equal(events[0].resource_id, "id1");
+      assert.ok(events[0].summary?.includes("First memory"));
+      assert.equal(events[2].summary, "Checked server status");
+    });
+
+    it("should not return events from other sessions", async () => {
+      const sessionId = metricsModule.getCurrentSessionId();
+      assert.ok(sessionId);
+
+      db.logSessionEvent(sessionId, "tool_call", null, "This session event");
+      db.logSessionEvent("other-session-id", "tool_call", null, "Other session event");
+
+      const events = db.getSessionEvents(sessionId);
+      assert.equal(events.length, 1);
+      assert.equal(events[0].summary, "This session event");
+    });
+
+    it("should include activity_log in mm_session_resume", async () => {
+      const sessionId = metricsModule.getCurrentSessionId();
+      assert.ok(sessionId);
+
+      // Log some events for the current session
+      db.logSessionEvent(sessionId, "memory_stored", "mem1", "Stored learning: Auth fix");
+      db.logSessionEvent(sessionId, "tool_call", null, "Searched memories: \"auth\"");
+
+      // Save session as paused
+      await handleMmSessionSave({ summary: "Test session with activity", status: "paused" });
+
+      // Re-init metrics to create a new session for resume
+      metricsModule.initMetrics();
+
+      const result = await handleMmSessionResume({});
+      assert.equal(result.success, true);
+      const sessions = result.sessions as Array<Record<string, unknown>>;
+      assert.ok(sessions.length >= 1);
+
+      // Find the paused session (should have activity_log)
+      const pausedSession = sessions.find((s) => s.status === "paused");
+      assert.ok(pausedSession, "Should have a paused session");
+      const activityLog = pausedSession!.activity_log as Array<Record<string, unknown>>;
+      assert.ok(Array.isArray(activityLog), "activity_log should be an array");
+      assert.ok(activityLog.length >= 2, `Expected at least 2 activity entries, got ${activityLog.length}`);
+
+      // Each entry should have event_type, summary, created_at
+      for (const entry of activityLog) {
+        assert.ok(entry.event_type, "Each activity entry should have event_type");
+        assert.ok(entry.created_at, "Each activity entry should have created_at");
+      }
+
+      // Verify the content is correct
+      const storeEntry = activityLog.find((e) => e.event_type === "memory_stored");
+      assert.ok(storeEntry, "Should have memory_stored in activity_log");
+      assert.ok((storeEntry!.summary as string).includes("Auth fix"));
+    });
+  });
+
   // --- Tool filtering (--moltbook flag) ---
   describe("config: tool filtering", () => {
     it("should report default mode without --moltbook flag", () => {

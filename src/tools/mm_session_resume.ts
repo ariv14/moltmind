@@ -1,4 +1,4 @@
-import { listSessions, getLatestHandoff, getSessionDiagnostics, getActiveSessions, getRecentEvents } from "../db.js";
+import { listSessions, getLatestHandoff, getSessionDiagnostics, getActiveSessions, getRecentEvents, getSessionEvents } from "../db.js";
 
 export async function handleMmSessionResume(args: {
   limit?: number;
@@ -14,6 +14,7 @@ export async function handleMmSessionResume(args: {
   // Build formatted summary
   const sessionSummaries = sessions.map((s) => {
     const diag = getSessionDiagnostics(s.id);
+    const events = getSessionEvents(s.id, 50);
     return {
       id: s.id,
       status: s.status,
@@ -26,6 +27,11 @@ export async function handleMmSessionResume(args: {
       ended_at: s.ended_at,
       tool_calls: diag.total_calls,
       errors: diag.errors,
+      activity_log: events.map((e) => ({
+        event_type: e.event_type,
+        summary: e.summary,
+        created_at: e.created_at,
+      })),
     };
   });
 

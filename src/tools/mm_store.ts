@@ -1,8 +1,7 @@
-import { insertMemory, logSessionEvent } from "../db.js";
+import { insertMemory } from "../db.js";
 import { embed, embeddingToBuffer } from "../embeddings.js";
 import { checkStoreLimits } from "../license.js";
 import { getVectorStore } from "../vector_store.js";
-import { getCurrentSessionId } from "../metrics.js";
 import type { MemoryType } from "../types.js";
 
 export async function handleMmStore(args: {
@@ -38,12 +37,6 @@ export async function handleMmStore(args: {
   // Dual-write to vector store (no-op on BruteForceStore)
   if (embedding) {
     getVectorStore().upsert(memory.id, embedding);
-  }
-
-  // Log cross-session event
-  const sessionId = getCurrentSessionId();
-  if (sessionId) {
-    logSessionEvent(sessionId, "memory_stored", memory.id, memory.title);
   }
 
   return { success: true, id: memory.id, message: `Memory stored: ${memory.title}` };

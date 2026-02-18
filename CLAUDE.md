@@ -336,13 +336,22 @@ Multiple MCP server processes can run concurrently on the same machine (e.g., mu
 
 - `logSessionEvent(sessionId, eventType, resourceId?, summary?)` — inserts into `session_events`.
 - `getRecentEvents(sinceIso, limit?)` — returns events after a timestamp.
-- Events are auto-logged by tool handlers:
+- `getSessionEvents(sessionId, limit?)` — returns events for a specific session in chronological order (ASC).
+- **Auto-logging:** Every tool call is automatically logged as a session event by `wrapTool()` in `src/index.ts`. The `TOOL_SUMMARIZERS` map generates human-readable summaries for each tool. Failed calls get `[FAILED]` appended to the summary.
+- Tool handlers do NOT manually call `logSessionEvent()` — `wrapTool()` handles it centrally. The only exception is claim-specific events in `mm_handoff_create` (one handoff can claim multiple resources).
+- Event types by tool:
   - `mm_store` → `memory_stored` (with memory title)
   - `mm_update` → `memory_updated`
   - `mm_delete` → `memory_archived`
-  - `mm_handoff_create` → `handoff_created`
-  - Claims → `claim` / `release`
-- Surfaced in `mm_status` (last 5 min) and `mm_session_resume` (last 10 min).
+  - `mm_handoff_create` → `handoff_created` (auto-logged) + `claim`/`release` (manual, per resource)
+  - All other tools → `tool_call`
+- Surfaced in `mm_status` (last 5 min) and `mm_session_resume` (last 10 min + per-session `activity_log`).
+
+#### Session Resume Activity Log
+
+- `mm_session_resume` includes an `activity_log` field on each session summary.
+- `activity_log` is an array of `{ event_type, summary, created_at }` from `getSessionEvents()`.
+- Provides a complete chronological record of what happened in each session — enables automatic session restore with zero agent action.
 
 #### Advisory Claims (Conflict Avoidance)
 
